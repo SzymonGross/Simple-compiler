@@ -3,9 +3,11 @@
 #include <string>
 #include <vector>
 
-struct Token {
-    int id = 0;
-    std::vector<std::string> args;
-};
+struct Token
+{
+    std::string name;
+    std::vector<std::string> arg;
 
-Token parseLine(const std::string& line);
+    Token(const std::string &s);
+    Token();
+};
