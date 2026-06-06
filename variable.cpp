@@ -1,19 +1,17 @@
-#include "variable.hpp"
+#include "varible.hpp"
 
-Variable::Variable(std::string n, int t)
-    : name(std::move(n)), type(t) {
-    if (type == 0) {
-        size = 0;
-        memoryAddress = -1;
-    } else if (type == 1) {
-        size = 4;
-    } else if (type == 2) {
-        size = 8;
-    }
-}
+#include <stdexcept>
 
-Variable::Variable(std::string n, int t, std::ptrdiff_t address, bool temp)
-    : Variable(std::move(n), t) {
-    memoryAddress = address;
-    temporary = temp;
+Typ Varbile::convert(const std::string s)
+{
+    if (s == "liczba")
+        return Typ::liczba;
+    if (s == "logika")
+        return Typ::logika;
+    if (s == "tablica_liczba")
+        return Typ::tablica_liczba;
+    if (s == "tablica_logika")
+        return Typ::tablica_logika;
+
+    throw std::invalid_argument("Nieznany typ: " + s);
 }
