@@ -28,27 +28,27 @@ endif_0:
     cmp dword ptr [rbp-8], 10
     jge endif_1
 
-    mov dword ptr [rbp-9], 1
+    mov dword ptr [rbp-4], 1
     jmp blockend_0
 
 endif_1:
     cmp dword ptr [rbp-8], 25
     jge endif_2
 
-    mov dword ptr [rbp-9], 2
+    mov dword ptr [rbp-4], 2
     jmp blockend_0
 
 endif_2:
     cmp dword ptr [rbp-8], 40
     jge endif_3
 
-    mov dword ptr [rbp-9], 3
+    mov dword ptr [rbp-4], 3
     jmp blockend_0
 
 endif_3:
-    mov dword ptr [rbp-9], 4
+    mov dword ptr [rbp-4], 4
 blockend_0:
-    mov eax, dword ptr [rbp-9]
+    mov eax, dword ptr [rbp-4]
     add rsp, 32
     pop rbp
     ret
