@@ -15,15 +15,15 @@ namespace
         {Op::Sub, {1, 0}},
         {Op::Imul, {1, 0}},
 
-        {Op::Push, {0, 0}}, 
-        {Op::Pop, {1, 0}}, 
+        {Op::Push, {0, 0}},
+        {Op::Pop, {1, 0}},
         {Op::Ret, {0, 0}},
 
         {Op::Label, {0, 0}},
         {Op::Directive, {0, 0}},
 
-        {Op::Cmp, {0, 0}}, 
-        {Op::Test, {0, 0}}, 
+        {Op::Cmp, {0, 0}},
+        {Op::Test, {0, 0}},
 
         {Op::Jle, {0, 0}},
         {Op::Jne, {0, 0}},
@@ -41,8 +41,8 @@ namespace
         {Op::Sal, {1, 0}},
         {Op::Sar, {1, 0}},
 
-        {Op::Cdq, {0, 0}}, 
-        {Op::Cqo, {0, 0}}, 
+        {Op::Cdq, {0, 0}},
+        {Op::Cqo, {0, 0}},
         {Op::Idiv, {0, 0}},
 
         {Op::Sete, {1, 0}},
@@ -755,9 +755,9 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
 
         res.first.emplace_back(Op::Push, "rbp");
         res.first.emplace_back(Op::Mov, "rbp", "rsp");
-        res.first.emplace_back(Op::Sub, "rsp", std::to_string(max_ofs));
+        res.first.emplace_back(Op::Sub, "rsp", std::to_string(stack.size()));
 
-        res.second.emplace_back(Op::Add, "rsp", std::to_string(max_ofs));
+        res.second.emplace_back(Op::Add, "rsp", std::to_string(stack.size()));
         res.second.emplace_back(Op::Pop, "rbp");
         res.second.emplace_back(Op::Ret);
     }
@@ -808,10 +808,29 @@ void Generator::mem_aloc(Tree::Node *node)
         }
 
         var->size = size;
-        ofs += size;
-        var->addres = ofs;
+        std::size_t i = size;
 
-        max_ofs = std::max(max_ofs, ofs);
+        while (true)
+        {
+            while (stack.size() <= i)
+                stack.push_back(0);
+
+            bool is = 0;
+            for (std::size_t j = i; i - size < j; j--)
+                if (stack[j])
+                {
+                    is = 1;
+                    i += std::max(static_cast<long long>(i) - static_cast<long long>(j), 1LL);
+                    break;
+                }
+
+            if (!is)
+                break;
+        }
+        var->addres = i;
+
+        for (std::size_t j = var->addres; j + var->size > var->addres; j--)
+            stack[j] = 1;
 
         mem[node->arg.back()] = var;
     }
@@ -823,7 +842,9 @@ void Generator::mem_aloc(Tree::Node *node)
             throw std::runtime_error("Ponowne usunięcie: " + name);
 
         Varbile *var = mem[name];
-        ofs -= var->size;
+
+        for (std::size_t j = var->addres; j + var->size > var->addres; j--)
+            stack[j] = 0;
     }
 
     for (const auto &n : node->child)
