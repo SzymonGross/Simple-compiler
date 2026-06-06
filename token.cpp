@@ -1,142 +1,118 @@
 #include "token.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
-namespace {
+namespace
+{
+    const std::unordered_map<std::string, int> lim = {
+        {"stworz", 2},
+        {"ustaw", 2},
+        {"begin", 0},
+        {"end", 0},
+        {"dopoki", 1},
+        {"jezeli", 1},
+        //{"albojezeli", 1}, do implmentacji
+        //{"albo", 0},
+        {"punkt", 1},
+        {"idz", 1},
+        {"wczytaj", 3},
+        {"zapisz", 3},
+        {"zakoncz", 1}};
 
-std::string trimLeft(std::string s) {
-    auto it = std::find_if_not(s.begin(), s.end(), [](unsigned char ch) {
-        return std::isspace(ch) != 0;
-    });
-    s.erase(s.begin(), it);
-    return s;
+    const std::unordered_set<std::string> logi = {"dopoki", "jezeli"};
+    const std::unordered_set<std::string> arit = {"ustaw"};
+    const std::unordered_set<std::string> it_depends = {"stworz"};
+
+    const std::unordered_map<std::string, int> type_arg = {{"liczba", 1}, {"logika", 1}, {"tablica", 3}};
+
+    std::vector<std::string> split(const std::string &text)
+    {
+        std::stringstream ss(text);
+
+        std::vector<std::string> res;
+        std::string word;
+
+        while (ss >> word)
+        {
+            res.push_back(word);
+        }
+
+        return res;
+    }
 }
 
-std::string trimRight(std::string s) {
-    auto it = std::find_if_not(s.rbegin(), s.rend(), [](unsigned char ch) {
-        return std::isspace(ch) != 0;
-    });
-    s.erase(it.base(), s.end());
-    return s;
-}
+Token::Token() {}
 
-std::string trim(std::string s) {
-    return trimRight(trimLeft(std::move(s)));
-}
+Token::Token(const std::string &s)
+{
+    const auto v = split(s);
 
-const std::unordered_map<std::string, int> kCommandId{
-    {"zakoncz", 1},
-    {"stworz", 2},
-    {"ustaw", 3},
-    {"wypisz", 4},
-    {"jezeli", 5},
-    {"end", 6},
-    {"punkt", 7},
-    {"idz", 8},
-};
-
-}  // namespace
-
-Token parseLine(const std::string& line) {
-    std::string cleaned = trim(line);
-    if (cleaned.empty()) {
-        return Token{};
+    if (v.empty())
+    {
+        name = "Pusty";
     }
+    else
+    {
+        name = v[0];
 
-    std::istringstream iss(cleaned);
-    std::string command;
-    iss >> command;
-    if (command.empty()) {
-        return Token{};
-    }
+        auto it = lim.find(name);
 
-    auto it = kCommandId.find(command);
-    if (it == kCommandId.end()) {
-        throw std::invalid_argument("Nieznana komenda: " + command);
-    }
+        if (it == lim.end())
+            throw std::runtime_error("Nieznana komenda: " + name);
 
-    Token token;
-    token.id = it->second;
+        int expectedArgs = it->second;
+        int actualArgs = static_cast<int>(v.size()) - 1;
 
-    if (command == "stworz") {
-        std::string typeName;
-        std::string varName;
-        if (!(iss >> typeName >> varName)) {
-            throw std::invalid_argument("Komenda 'stworz' wymaga 2 argumentow");
-        }
-        token.args = {typeName, varName};
-        return token;
-    }
-
-    if (command == "ustaw") {
-        std::string target;
-        if (!(iss >> target)) {
-            throw std::invalid_argument("Komenda 'ustaw' wymaga nazwy zmiennej docelowej");
-        }
-        std::string expr;
-        std::getline(iss, expr);
-        expr = trim(expr);
-        if (expr.empty()) {
-            throw std::invalid_argument("Komenda 'ustaw' wymaga wyrazenia");
-        }
-        token.args = {target, expr};
-        return token;
-    }
-
-    if (command == "zakoncz" || command == "wypisz") {
-        std::string expr;
-        std::getline(iss, expr);
-        expr = trim(expr);
-        if (expr.empty()) {
-            throw std::invalid_argument("Komenda wymaga argumentu");
-        }
-        token.args = {expr};
-        return token;
-    }
-
-    if (command == "jezeli") {
-        std::string rest;
-        std::getline(iss, rest);
-        rest = trim(rest);
-        const std::string suffix = " begin";
-        if (rest.size() <= suffix.size() || rest.compare(rest.size() - suffix.size(), suffix.size(), suffix) != 0) {
-            throw std::invalid_argument("Komenda 'jezeli' ma postac: jezeli <wyrazenie> begin");
+        if (logi.count(name))
+        {
+            actualArgs = expectedArgs;
+            arg.emplace_back();
+            for (std::size_t i = 1; i < v.size(); i++)
+            {
+                arg[0] += v[i] + ' ';
+            }
+            arg[0].pop_back();
         }
 
-        std::string expr = trim(rest.substr(0, rest.size() - suffix.size()));
-        if (expr.empty()) {
-            throw std::invalid_argument("Komenda 'jezeli' wymaga wyrazenia");
+        if (arit.count(name))
+        {
+            actualArgs = expectedArgs;
+            arg.push_back(v[1]);
+            arg.emplace_back();
+            for (std::size_t i = 2; i < v.size(); i++)
+            {
+                arg[1] += v[i] + ' ';
+            }
+            arg[1].pop_back();
         }
-        token.args = {expr};
-        return token;
-    }
 
-    if (command == "end") {
-        std::string extra;
-        std::getline(iss, extra);
-        if (!trim(extra).empty()) {
-            throw std::invalid_argument("Komenda 'end' nie przyjmuje argumentow");
+        if (it_depends.count(name))
+        {
+            if (actualArgs < 2)
+                throw std::runtime_error("Zła liczba argumentów " + name);
+            if (type_arg.count(v[1]))
+            {
+                auto itr = type_arg.find(v[1]);
+                if (actualArgs != itr->second + 1)
+                    throw std::runtime_error("Zla liczba argumentow " + name);
+                for (std::size_t i = 1; i < v.size(); i++)
+                    arg.push_back(v[i]);
+                actualArgs = expectedArgs;
+            }
+            else
+                throw std::runtime_error("Nie istniejący typ: " + v[1]);
         }
-        return token;
-    }
 
-    if (command == "punkt" || command == "idz") {
-        std::string name;
-        if (!(iss >> name)) {
-            throw std::invalid_argument("Komenda '" + command + "' wymaga nazwy punktu");
-        }
-        std::string extra;
-        std::getline(iss, extra);
-        if (!trim(extra).empty()) {
-            throw std::invalid_argument("Komenda '" + command + "' przyjmuje dokladnie 1 argument");
-        }
-        token.args = {name};
-        return token;
-    }
+        if (actualArgs != expectedArgs)
+            throw std::runtime_error("Zla liczba arugmentow: " + name);
 
-    throw std::logic_error("Nieobslugiwany przypadek parsowania");
+        if (!logi.count(name) && !arit.count(name) && !it_depends.count(name))
+            for (std::size_t i = 1; i < v.size(); i++)
+            {
+                arg.push_back(v[i]);
+            }
+    }
 }
