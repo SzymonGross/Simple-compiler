@@ -832,18 +832,90 @@ void Generator::mem_aloc(Tree::Node *node)
 
 bool Generator::worth_storing(const std::string &s, const std::size_t beg) const
 {
-    for (std::size_t i = beg + 1; i < body.size(); i++)
+    std::unordered_map<std::string, std::size_t> labels;
+    for (std::size_t i = 0; i < body.size(); i++)
+        if (body[i].op == Op::Label)
+            labels[body[i].a] = i;
+
+    auto reads_slot = [&](const AsmCommand &cur)
     {
+        if (cur.b == s)
+            return true;
+        if (cur.a != s)
+            return false;
+
+        switch (cur.op)
+        {
+        case Op::Add:
+        case Op::Sub:
+        case Op::Imul:
+        case Op::And:
+        case Op::Or:
+        case Op::Xor:
+        case Op::Sal:
+        case Op::Sar:
+        case Op::Cmp:
+        case Op::Test:
+        case Op::Push:
+            return true;
+        default:
+            return false;
+        }
+    };
+
+    auto writes_slot = [&](const AsmCommand &cur)
+    {
+        auto it = modify.find(cur.op);
+        return cur.a == s && it != modify.end() && it->second.first;
+    };
+
+    std::vector<std::size_t> pending = {beg + 1};
+    std::unordered_set<std::size_t> visited;
+
+    while (!pending.empty())
+    {
+        std::size_t i = pending.back();
+        pending.pop_back();
+
+        if (i >= body.size() || visited.count(i))
+            continue;
+        visited.insert(i);
+
         const AsmCommand &cur = body[i];
         if (cur.op != Op::Directive && cur.op != Op::Label)
             if (!modify.count(cur.op))
                 throw std::runtime_error("Nieznana komenda: " + cur.emit());
 
-        auto [p1, p2] = modify[cur.op];
-        if (cur.a == s)
-            return !p1;
-        if (cur.b == s)
-            return !p2;
+        if (reads_slot(cur))
+            return true;
+        if (writes_slot(cur))
+            continue;
+
+        if (cur.op == Op::Call)
+            return true;
+        if (cur.op == Op::Ret)
+            continue;
+
+        if (cur.op == Op::Jmp)
+        {
+            auto it = labels.find(cur.a);
+            if (it == labels.end())
+                return true;
+            pending.push_back(it->second);
+            continue;
+        }
+
+        if (is_conditional_jump(cur.op))
+        {
+            auto it = labels.find(cur.a);
+            if (it == labels.end())
+                return true;
+            pending.push_back(it->second);
+            pending.push_back(i + 1);
+            continue;
+        }
+
+        pending.push_back(i + 1);
     }
     return false;
 }
