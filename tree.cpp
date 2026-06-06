@@ -669,16 +669,84 @@ int Tree::node_traversal(Node *cur)
         return 0;
     }
 
-    if (cur->name == "jezeli" && !var_names.count(cur->arg[0]))
+    if (cur->name == "albo")
     {
         Node *par = cur->parent;
+        auto &v = par->child;
+
+        auto it = std::find(v.begin(), v.end(), cur);
+        if (it == v.end())
+            return 0;
+
+        std::size_t idx = std::distance(v.begin(), it);
+
+        v.erase(it);
+
+        for (std::size_t i = 0; i < cur->child.size(); ++i)
+        {
+            Node *child = cur->child[i];
+            child->parent = par;
+            v.insert(v.begin() + idx + i, child);
+        }
+        cur->child.clear();
+
+        delete cur;
+        return 1;
+    }
+
+    if (cur->name == "albojezeli")
+    {
+        Node *par = cur->parent;
+        auto &v = par->child;
 
         std::size_t idx = 0;
         while (par->child[idx] != cur)
             idx++;
 
-        std::string name = get_var_name("logika");
+        std::size_t block_size = 1;
+        while (idx + block_size < v.size() && (v[idx + block_size]->name == "albojezeli" || v[idx + block_size]->name == "albo"))
+            block_size++;
+
+        if (v[idx + block_size]->name != "punkt")
+            throw std::runtime_error("Blok jezeli jest popsuty (wina klompliatora) :(");
+
+        std::string punkt_label = v[idx + block_size]->arg[0];
+        Node *idz = new Node("idz", cur);
+        idz->arg.push_back(punkt_label);
+        cur->child.push_back(idz);
+
+        cur->name = "jezeli";
+    }
+
+    if (cur->name == "jezeli" && !var_names.count(cur->arg[0]))
+    {
+        Node *par = cur->parent;
+
+        std::size_t idx = 0;
         auto &v = par->child;
+        while (v[idx] != cur)
+            idx++;
+
+        std::size_t block_size = 1;
+        while (idx + block_size < v.size() && (v[idx + block_size]->name == "albojezeli" || v[idx + block_size]->name == "albo"))
+            block_size++;
+
+        if (block_size > 1)
+        {
+            if (!(idx + block_size < v.size() && v[idx + block_size]->name == "punkt" && !cur->child.empty() && cur->child.back()->name == "idz" && cur->child.back()->arg[0] == v[idx + block_size]->arg[0]))
+            {
+                std::string punkt_label = get_stop_name("blockend");
+                Node *punkt = new Node("punkt", par);
+                punkt->arg.push_back(punkt_label);
+                v.insert(v.begin() + idx + block_size, punkt);
+
+                Node *idz = new Node("idz", cur);
+                idz->arg.push_back(punkt_label);
+                cur->child.push_back(idz);
+            }
+        }
+
+        std::string name = get_var_name("logika");
 
         Node *set = new Node("ustaw", par);
         v.insert(v.begin() + idx, set);
@@ -1493,7 +1561,7 @@ void Tree::release_dead_variables_node()
         for (const std::string &name : entry.second)
         {
             Node *release = new Node("usun", par);
-            //release->arg.insert(release->arg.end(), type_by_name[name].begin(), type_by_name[name].end());
+            // release->arg.insert(release->arg.end(), type_by_name[name].begin(), type_by_name[name].end());
             release->arg.push_back(name);
             v.insert(v.begin() + idx + offset, release);
             offset++;
