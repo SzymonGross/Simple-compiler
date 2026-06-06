@@ -1,8 +1,12 @@
 # Simple Compiler
 
-This project is a refactored implementation of a simple compiler written in C++.
+This is a simple compiler written in C++.
 
-The compiler translates a small custom language into assembly-like instructions. The main goal of this version was to clean up the project structure, separate responsibilities between components, and add basic control-flow instructions such as conditional blocks and jumps.
+The compiler translates a small Polish-inspired language into assembly-like
+instructions. It supports variables, arithmetic expressions, logical
+expressions, conditional blocks, loops, labels, jumps, and simple arrays.
+
+The main goal of this version was to implement AST and idea of transleting language step by step to simpler intermidate language.
 
 # Project Structure
 
@@ -10,16 +14,32 @@ The compiler translates a small custom language into assembly-like instructions.
 .
 ├── main.cpp                            # Program entry point
 ├── token.hpp / token.cpp               # Command-line and token parsing
-├── variable.hpp / variable.cpp         # Variable model
-├── asm_command.hpp / asm_command.cpp   # Representation of ASM instructions
+├── varible.hpp / varible.cpp           # Variable model
+├── tree.hpp / tree.cpp                 # Syntax tree and transformations
+├── asm_command.hpp / asm_command.cpp   # Representation and generation of ASM instructions
 ├── compiler.hpp / compiler.cpp         # Main compiler logic
+├── kody_pl/                            # Example source programs
+├── kody_s/                             # Example generated assembly output
 └── CMakeLists.txt                      # Build configuration
 ```
+
 # Building
 
-```
+```bash
 cmake -S . -B build
 cmake --build build
+```
+
+# Usage
+
+```bash
+./build/komp <input_file> <output_file>
+```
+
+Example:
+
+```bash
+./build/komp kody_pl/p1.pl kody_s/p1.s
 ```
 
 # Commands
@@ -27,133 +47,141 @@ cmake --build build
 The toy language uses Polish-inspired commands.
 
 ```text
--zakoncz <exit_code>
-    Exit the program with the specified exit code.
-
--stworz <type> <name>
+stworz <type> <name>
     Create a variable with the given type and name.
 
+stworz tablica <type> <size> <name>
+    Create an array with the given element type, size, and name.
+
     Supported types:
-    - liczba    4-byte integer
-    - olbrzym   8-byte integer
+    - liczba    integer
+    - logika    boolean/logical value
 
--ustaw <name> <expression>
-    Assign the value of <expression> to the variable <name>.
+ustaw <name> <expression>
+    Assign the value of <expression> to the variable or array element.
 
--jezeli <expression> begin
-    Execute the following block only if <expression> is positive.
-
--end
-    End the nearest block opened with begin.
-
--punkt <name>
-    Define a label with the given name.
-
--idz <name>
-    Jump to the label with the given name.
-```
-
-# Example codes
-
-### 1. Basic arithmetic and variable assignment
-
-```text
-stworz liczba a
-stworz liczba b
-ustaw a 2+3
-ustaw b a*2+3
-zakoncz b
-```
-
-Expected result:
-```text
-exit code: 13
-```
-
-Explanation:
-```text
-a = 2 + 3 = 5
-b = a * 2 + 3 = 13
-```
-
-### 2. Nested conditional blocks
-
-This program demonstrates nested `jezeli ... begin ... end` blocks.
-
-```text
-stworz liczba a
-stworz liczba b
-ustaw a 3
-ustaw b 0
-
-jezeli a-1 begin
-    ustaw b 5
-
-    jezeli b-6 begin
-        ustaw b 9
-    end
+jezeli <expression>
+begin
+    Execute the following block only if <expression> is true.
 end
 
-zakoncz b
+dopoki <expression>
+begin
+    Repeat the following block while <expression> is true.
+end
+
+punkt <name>
+    Define a label with the given name.
+
+idz <name>
+    Jump to the label with the given name.
+
+zakoncz <expression>
+    Exit the program with the value of <expression>.
 ```
 
-Expected result:
+Expressions can use arithmetic, comparisons, logic, and array indexing:
+
 ```text
-exit code: 5
++  -  *  /  %  <<  >>
+==  !=  <  <=  >  >=
+&&  ||  !
+tab[index]
 ```
 
-Explanation:
-```text
-a - 1 = 2, so the first block is executed.
-b is set to 5.
-b - 6 = -1, so the nested block is not executed.
-The program exits with b = 5.
-```
+# Example Codes
 
-### 3. Loop using labels and jumps
+## p1.pl - Greatest common divisor
 
-This program computes 5! using a `label` and a `jump`.
+This program computes the greatest common divisor of 15 and 12 using repeated
+subtraction.
 
 ```text
-stworz liczba i
 stworz liczba a
-ustaw i 5
-ustaw a 1
+ustaw a 15
 
-punkt loop
-jezeli i-1 begin
-    ustaw a a*i
-    ustaw i i-1
-    idz loop
+stworz liczba b
+ustaw b 12
+
+dopoki a!=b
+begin
+    jezeli a<b
+    begin
+        stworz liczba c
+        ustaw c a
+        ustaw a b
+        ustaw b c
+    end
+
+    ustaw a a - b
 end
 
 zakoncz a
 ```
 
 Expected result:
-```text
-exit code: 120
-```
-Explanation:
-```text
-The program repeatedly multiplies a by i and decreases i by 1.
-It computes:
 
-5 * 4 * 3 * 2 * 1 = 120
+```text
+exit code: 3
 ```
 
-# What I Learned
+## p2.pl - Loop with logical condition
 
-This project helped me understand how higher-level control-flow constructs can be translated into lower-level jump instructions.
+This program uses multiplication, a `dopoki` loop, comparison operators, and a
+logical `||` condition. Compliator is able to optymalize it to single return statment.
 
-The most interesting part was handling nested conditional blocks correctly: each end has to match the nearest currently open begin, which required keeping track of block structure during compilation.
+```text
+stworz liczba a
+ustaw a 3
 
-# Technologies
+stworz liczba b
+ustaw b 7
 
--C++
+stworz liczba c
+ustaw c a*b
 
--CMake
+dopoki b > 0
+begin
+    ustaw b b-1
 
--Compiler design basics
+    jezeli a > b || b == 5
+    begin
+        ustaw a a+1
+    end
+end
 
--Control-flow compilation
+zakoncz a
+```
+
+Expected result:
+
+```text
+exit code: 8
+```
+
+## p3.pl - Fibonacci numbers with an array
+
+This program stores Fibonacci numbers in an array and exits with `tab[6]`. Compliator is able to optymalize it to single return statment.
+
+```text
+stworz tablica liczba 15 tab
+ustaw tab[0] 1
+ustaw tab[1] 1
+
+stworz liczba i
+ustaw i 0
+
+dopoki i < 5
+begin
+    ustaw tab[i+2] tab[i] + tab[i+1]
+    ustaw i i+1
+end
+
+zakoncz tab[6]
+```
+
+Expected result:
+
+```text
+exit code: 13
+```
