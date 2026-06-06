@@ -1,19 +1,1154 @@
 #include "asm_command.hpp"
 
-std::string AsmCommand::emit() const {
-    switch (op) {
-        case Op::Mov:      return "mov " + a + ", " + b;
-        case Op::Add:      return "add " + a + ", " + b;
-        case Op::Sub:      return "sub " + a + ", " + b;
-        case Op::Imul:     return "imul " + a + ", " + b;
-        case Op::Push:     return "push " + a;
-        case Op::Pop:      return "pop " + a;
-        case Op::Ret:      return "ret";
-        case Op::Label:    return a;
-        case Op::Directive:return a;
-        case Op::Cmp:      return "cmp " + a + ", " + b;
-        case Op::Jle:      return "jle " + a;
-        case Op::Jmp:      return "jmp " + a;
+#include <stdexcept>
+#include <iostream>
+#include <unordered_set>
+#include <vector>
+
+namespace
+{
+    const std::unordered_set<std::string> operands = {"+", "-", "*", "/", "%", "<<", ">>", "&&", "||", "(", ")", "==", "!=", "<=", ">=", "<", ">", "!"};
+
+    std::unordered_map<Op, std::pair<bool, bool>> modify = {
+        {Op::Mov, {1, 0}},
+        {Op::Add, {1, 0}},
+        {Op::Sub, {1, 0}},
+        {Op::Imul, {1, 0}},
+
+        {Op::Push, {0, 0}}, 
+        {Op::Pop, {1, 0}}, 
+        {Op::Ret, {0, 0}},
+
+        {Op::Label, {0, 0}},
+        {Op::Directive, {0, 0}},
+
+        {Op::Cmp, {0, 0}}, 
+        {Op::Test, {0, 0}}, 
+
+        {Op::Jle, {0, 0}},
+        {Op::Jne, {0, 0}},
+        {Op::Jmp, {0, 0}},
+        {Op::Je, {0, 0}},
+        {Op::Jl, {0, 0}},
+        {Op::Jg, {0, 0}},
+        {Op::Jge, {0, 0}},
+
+        {Op::Lea, {1, 0}},
+
+        {Op::And, {1, 0}},
+        {Op::Or, {1, 0}},
+        {Op::Xor, {1, 0}},
+        {Op::Sal, {1, 0}},
+        {Op::Sar, {1, 0}},
+
+        {Op::Cdq, {0, 0}}, 
+        {Op::Cqo, {0, 0}}, 
+        {Op::Idiv, {0, 0}},
+
+        {Op::Sete, {1, 0}},
+        {Op::Setne, {1, 0}},
+        {Op::Setl, {1, 0}},
+        {Op::Setle, {1, 0}},
+        {Op::Setg, {1, 0}},
+        {Op::Setge, {1, 0}},
+
+        {Op::Movzx, {1, 0}},
+
+        {Op::Call, {0, 0}},
+
+    };
+
+    std::unordered_map<Op, Op> negated_jump = {
+        {Op::Je, Op::Jne},
+        {Op::Jne, Op::Je},
+
+        {Op::Jl, Op::Jge},
+        {Op::Jge, Op::Jl},
+
+        {Op::Jle, Op::Jg},
+        {Op::Jg, Op::Jle},
+    };
+
+    std::unordered_map<Op, Op> set_to_jump = {
+        {Op::Sete, Op::Je},
+        {Op::Setne, Op::Jne},
+
+        {Op::Setl, Op::Jl},
+        {Op::Setle, Op::Jle},
+
+        {Op::Setg, Op::Jg},
+        {Op::Setge, Op::Jge},
+    };
+
+    std::unordered_map<std::string, std::size_t> typ_to_size = {{"liczba", 4}, {"logika", 1}};
+
+    bool is_num(const std::string &s)
+    {
+        if (s.empty())
+            return false;
+        for (const auto &c : s)
+            if (c < '0' || '9' < c)
+                return false;
+        return true;
     }
+
+    std::string remove_spaces(std::string s)
+    {
+        for (std::size_t i = 0; i < s.size(); i++)
+            while (i < s.size() && s[i] == ' ')
+                s.erase(i, 1);
+        return s;
+    }
+
+    bool split_expr(const std::string &expr, std::string &beg, std::string &sign, std::string &end)
+    {
+        std::string s = remove_spaces(expr);
+        for (std::size_t i = 0; i < s.size(); i++)
+        {
+            std::string two;
+            if (i + 1 < s.size())
+                two = s.substr(i, 2);
+
+            if (operands.count(two))
+            {
+                beg = s.substr(0, i);
+                sign = two;
+                end = s.substr(i + 2);
+                return true;
+            }
+
+            std::string one = s.substr(i, 1);
+            if (operands.count(one))
+            {
+                beg = s.substr(0, i);
+                sign = one;
+                end = s.substr(i + 1);
+                return true;
+            }
+        }
+
+        beg.clear();
+        sign.clear();
+        end.clear();
+        return false;
+    }
+
+    std::string prefix_gen(Varbile *var)
+    {
+        switch (var->ele_size)
+        {
+        case 1:
+            return "byte ptr ";
+        case 2:
+            return "word ptr ";
+        case 4:
+            return "dword ptr ";
+        case 8:
+            return "qword ptr ";
+        }
+        return "";
+    }
+
+    std::size_t prefix_idn(const std::string &s)
+    {
+        char c = s[0];
+        switch (c)
+        {
+        case 'b':
+            return 1;
+        case 'w':
+            return 2;
+        case 'd':
+            return 4;
+        case 'q':
+            return 8;
+        }
+        return 0;
+    }
+
+    std::string get_register(char c, std::size_t size)
+    {
+        switch (size)
+        {
+        case 1:
+            return std::string() + c + "l";
+        case 2:
+            return std::string() + c + "x";
+        case 4:
+            return std::string("e") + c + "x";
+        case 8:
+            return std::string("r") + c + "x";
+        }
+        return "";
+    }
+
+    std::string get_adres(Varbile *var)
+    {
+        return prefix_gen(var) + "[rbp-" + std::to_string(var->addres) + "]";
+    }
+
+    std::string get_nude_adres(Varbile *var)
+    {
+        return "[rbp-" + std::to_string(var->addres) + "]";
+    }
+
+    std::string get_register(char c, Varbile *var)
+    {
+        return get_register(c, var->ele_size);
+    }
+
+    char reg_id(const std::string &s)
+    {
+        if (s == "al" || s == "ax" || s == "eax" || s == "rax")
+            return 'a';
+        if (s == "bl" || s == "bx" || s == "ebx" || s == "rbx")
+            return 'b';
+        if (s == "cl" || s == "cx" || s == "ecx" || s == "rcx")
+            return 'c';
+        if (s == "dl" || s == "dx" || s == "edx" || s == "rdx")
+            return 'd';
+        return '~';
+    }
+
+    bool is_register(const std::string &s)
+    {
+        return reg_id(s) != '~';
+    }
+
+    bool is_memory(const std::string &s)
+    {
+        return s.find('[') != std::string::npos;
+    }
+
+    bool is_static_stack_memory(const std::string &s)
+    {
+        return s.find("[rbp-") != std::string::npos && s.find('+') == std::string::npos && s.find('*') == std::string::npos;
+    }
+
+    bool is_conditional_jump(Op op)
+    {
+        return op == Op::Je || op == Op::Jne || op == Op::Jl || op == Op::Jg || op == Op::Jle || op == Op::Jge;
+    }
+
+    bool may_change_flags(Op op)
+    {
+        switch (op)
+        {
+        case Op::Cmp:
+        case Op::Test:
+        case Op::Add:
+        case Op::Sub:
+        case Op::Imul:
+        case Op::And:
+        case Op::Or:
+        case Op::Xor:
+        case Op::Sal:
+        case Op::Sar:
+        case Op::Idiv:
+        case Op::Call:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool breaks_local_flow(Op op)
+    {
+        return op == Op::Label || op == Op::Jmp || op == Op::Call || op == Op::Ret;
+    }
+
+    bool can_replace_rhs_memory(Op op)
+    {
+        switch (op)
+        {
+        case Op::Add:
+        case Op::Sub:
+        case Op::Imul:
+        case Op::And:
+        case Op::Or:
+        case Op::Cmp:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool can_fold_cmp_first_operand(const std::string &src, const std::string &rhs)
+    {
+        if (is_num(src))
+            return false;
+        return !(is_memory(src) && is_memory(rhs));
+    }
+
+    bool operand_mentions_register(const std::string &operand, char id)
+    {
+        if (id == '~')
+            return false;
+
+        if (reg_id(operand) == id)
+            return true;
+
+        switch (id)
+        {
+        case 'a':
+            return operand.find("rax") != std::string::npos || operand.find("eax") != std::string::npos || operand.find("ax") != std::string::npos || operand.find("al") != std::string::npos;
+        case 'b':
+            return operand.find("rbx") != std::string::npos || operand.find("ebx") != std::string::npos || operand.find("bx") != std::string::npos || operand.find("bl") != std::string::npos;
+        case 'c':
+            return operand.find("rcx") != std::string::npos || operand.find("ecx") != std::string::npos || operand.find("cx") != std::string::npos || operand.find("cl") != std::string::npos;
+        case 'd':
+            return operand.find("rdx") != std::string::npos || operand.find("edx") != std::string::npos || operand.find("dx") != std::string::npos || operand.find("dl") != std::string::npos;
+        default:
+            return false;
+        }
+    }
+
+    bool reads_register(const AsmCommand &cmd, char id)
+    {
+        switch (cmd.op)
+        {
+        case Op::Mov:
+        case Op::Movzx:
+            return operand_mentions_register(cmd.b, id) || (is_memory(cmd.a) && operand_mentions_register(cmd.a, id));
+        case Op::Lea:
+            return operand_mentions_register(cmd.b, id);
+        case Op::Push:
+            return operand_mentions_register(cmd.a, id);
+        case Op::Pop:
+        case Op::Sete:
+        case Op::Setne:
+        case Op::Setl:
+        case Op::Setle:
+        case Op::Setg:
+        case Op::Setge:
+            return false;
+        case Op::Cdq:
+        case Op::Cqo:
+            return id == 'a';
+        case Op::Idiv:
+            return id == 'a' || id == 'd' || operand_mentions_register(cmd.a, id);
+        default:
+            return operand_mentions_register(cmd.a, id) || operand_mentions_register(cmd.b, id);
+        }
+    }
+
+    bool writes_register(const AsmCommand &cmd, char id)
+    {
+        if (id == '~')
+            return false;
+
+        if (cmd.op == Op::Cdq || cmd.op == Op::Cqo)
+            return id == 'd';
+        if (cmd.op == Op::Idiv)
+            return id == 'a' || id == 'd';
+        if (cmd.op == Op::Call)
+            return true;
+
+        auto it = modify.find(cmd.op);
+        return it != modify.end() && it->second.first && reg_id(cmd.a) == id;
+    }
+
+    bool register_used_before_write(const std::vector<AsmCommand> &commands, char id, std::size_t beg)
+    {
+        for (std::size_t i = beg; i < commands.size(); i++)
+        {
+            const AsmCommand &cur = commands[i];
+            if (breaks_local_flow(cur.op) || is_conditional_jump(cur.op))
+                return true;
+            if (reads_register(cur, id))
+                return true;
+            if (writes_register(cur, id))
+                return false;
+        }
+        return true;
+    }
+
+    bool cmp_operands_equal(const std::pair<std::string, std::string> &lhs,
+                            const std::pair<std::string, std::string> &rhs)
+    {
+        return lhs.first == rhs.first && lhs.second == rhs.second;
+    }
+
+    void load_index_to_rcx(std::vector<AsmCommand> &out, Varbile *idx)
+    {
+        if (idx->ele_size == 8)
+            out.emplace_back(Op::Mov, "rcx", get_adres(idx));
+        else if (idx->ele_size == 4)
+            out.emplace_back(Op::Mov, "ecx", get_adres(idx));
+        else
+            out.emplace_back(Op::Movzx, "ecx", get_adres(idx));
+    }
+}
+
+std::string AsmCommand::emit() const
+{
+    switch (op)
+    {
+    case Op::Mov:
+        return "mov " + a + ", " + b;
+    case Op::Add:
+        return "add " + a + ", " + b;
+    case Op::Sub:
+        return "sub " + a + ", " + b;
+    case Op::Imul:
+        return "imul " + a + ", " + b;
+    case Op::Push:
+        return "push " + a;
+    case Op::Pop:
+        return "pop " + a;
+    case Op::Ret:
+        return "ret";
+    case Op::Label:
+        return a + ":";
+    case Op::Directive:
+        return a;
+    case Op::Cmp:
+        return "cmp " + a + ", " + b;
+    case Op::Jle:
+        return "jle " + a + "\n";
+    case Op::Jne:
+        return "jne " + a + "\n";
+    case Op::Jmp:
+        return "jmp " + a + "\n";
+    case Op::Je:
+        return "je " + a + "\n";
+    case Op::Jl:
+        return "jl " + a + "\n";
+    case Op::Jg:
+        return "jg " + a + "\n";
+    case Op::Jge:
+        return "jge " + a + "\n";
+    case Op::Lea:
+        return "lea " + a + ", " + b;
+    case Op::And:
+        return "and " + a + ", " + b;
+    case Op::Or:
+        return "or " + a + ", " + b;
+    case Op::Xor:
+        return "xor " + a + ", " + b;
+    case Op::Sal:
+        return "sal " + a + ", " + b;
+    case Op::Sar:
+        return "sar " + a + ", " + b;
+    case Op::Cdq:
+        return "cdq";
+    case Op::Cqo:
+        return "cqo";
+    case Op::Idiv:
+        return "idiv " + a;
+    case Op::Sete:
+        return "sete " + a;
+    case Op::Setne:
+        return "setne " + a;
+    case Op::Setl:
+        return "setl " + a;
+    case Op::Setle:
+        return "setle " + a;
+    case Op::Setg:
+        return "setg " + a;
+    case Op::Setge:
+        return "setge " + a;
+    case Op::Movzx:
+        return "movzx " + a + ", " + b;
+    case Op::Call:
+        return "call " + a;
+    case Op::Test:
+        return "test " + a + ", " + b;
+    }
+
     return {};
+}
+
+std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_command(Tree::Node *node)
+{
+    std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> res;
+
+    auto require_mem = [&](const std::string &name) -> Varbile *
+    {
+        auto it = mem.find(name);
+        if (it == mem.end() || it->second == nullptr)
+            throw std::runtime_error("Nieznana zmienna: " + name);
+        return it->second;
+    };
+
+    if (node->name == "ustaw")
+    {
+        if (node->arg.size() < 2 || !mem.count(node->arg[0]))
+            throw std::runtime_error("Bledna komenda ustaw");
+
+        Varbile *dst = mem[node->arg[0]];
+
+        auto require_var = [&](const std::string &name) -> Varbile *
+        {
+            return require_mem(name);
+        };
+
+        auto operand_size = [&](const std::string &operand, std::size_t fallback)
+        {
+            auto it = mem.find(operand);
+            if (it != mem.end())
+                return it->second->ele_size;
+            return fallback;
+        };
+
+        auto load_operand = [&](const std::string &operand, char reg, std::size_t size)
+        {
+            if (is_num(operand))
+            {
+                res.first.emplace_back(Op::Mov, get_register(reg, size), operand);
+                return;
+            }
+
+            Varbile *src = require_var(operand);
+            if (src->ele_size == size)
+                res.first.emplace_back(Op::Mov, get_register(reg, size), get_adres(src));
+            else if (src->ele_size < size)
+                res.first.emplace_back(Op::Movzx, get_register(reg, size), get_adres(src));
+            else
+            {
+                res.first.emplace_back(Op::Mov, get_register(reg, src), get_adres(src));
+                res.first.emplace_back(Op::Mov, get_register(reg, size), get_register(reg, src));
+            }
+        };
+
+        auto alu_operand = [&](const std::string &operand, std::size_t size)
+        {
+            if (is_num(operand))
+                return operand;
+
+            Varbile *src = require_var(operand);
+            if (src->ele_size == size)
+                return get_adres(src);
+
+            load_operand(operand, 'c', size);
+            return get_register('c', size);
+        };
+
+        auto store_from_a = [&]()
+        {
+            res.first.emplace_back(Op::Mov, get_adres(dst), get_register('a', dst));
+        };
+
+        auto store_bool_from_al = [&]()
+        {
+            if (dst->ele_size == 1)
+                res.first.emplace_back(Op::Mov, get_adres(dst), "al");
+            else
+            {
+                res.first.emplace_back(Op::Movzx, get_register('a', dst), "al");
+                store_from_a();
+            }
+        };
+
+        auto setcc_for = [&](const std::string &sign)
+        {
+            if (sign == "==")
+                return Op::Sete;
+            if (sign == "!=")
+                return Op::Setne;
+            if (sign == "<")
+                return Op::Setl;
+            if (sign == "<=")
+                return Op::Setle;
+            if (sign == ">")
+                return Op::Setg;
+            if (sign == ">=")
+                return Op::Setge;
+            throw std::runtime_error("Nieznana operacja porownania: " + sign);
+        };
+
+        std::string expr = remove_spaces(node->arg[1]);
+        std::string beg, sign, end;
+
+        if (!split_expr(expr, beg, sign, end))
+        {
+            if (is_num(expr))
+                res.first.emplace_back(Op::Mov, get_adres(dst), expr);
+            else
+            {
+                load_operand(expr, 'a', dst->ele_size);
+                store_from_a();
+            }
+        }
+        else if (sign == "!")
+        {
+            std::size_t size = operand_size(end, dst->ele_size);
+            load_operand(end, 'a', size);
+            res.first.emplace_back(Op::Cmp, get_register('a', size), "0");
+            res.first.emplace_back(Op::Sete, "al");
+            store_bool_from_al();
+        }
+        else if (sign == "==" || sign == "!=" || sign == "<=" || sign == ">=" || sign == "<" || sign == ">")
+        {
+            std::size_t size = operand_size(beg, operand_size(end, dst->ele_size));
+            load_operand(beg, 'a', size);
+            if (is_num(end))
+                res.first.emplace_back(Op::Cmp, get_register('a', size), end);
+            else
+            {
+                load_operand(end, 'c', size);
+                res.first.emplace_back(Op::Cmp, get_register('a', size), get_register('c', size));
+            }
+            res.first.emplace_back(setcc_for(sign), "al");
+            store_bool_from_al();
+        }
+        else if (sign == "&&" || sign == "||")
+        {
+            std::size_t left_size = operand_size(beg, dst->ele_size);
+            std::size_t right_size = operand_size(end, dst->ele_size);
+
+            load_operand(beg, 'a', left_size);
+            res.first.emplace_back(Op::Cmp, get_register('a', left_size), "0");
+            res.first.emplace_back(Op::Setne, "al");
+
+            load_operand(end, 'c', right_size);
+            res.first.emplace_back(Op::Cmp, get_register('c', right_size), "0");
+            res.first.emplace_back(Op::Setne, "cl");
+
+            res.first.emplace_back(sign == "&&" ? Op::And : Op::Or, "al", "cl");
+            store_bool_from_al();
+        }
+        else if (sign == "+" || sign == "-" || sign == "*")
+        {
+            load_operand(beg, 'a', dst->ele_size);
+            std::string rhs = alu_operand(end, dst->ele_size);
+
+            if (sign == "+")
+                res.first.emplace_back(Op::Add, get_register('a', dst), rhs);
+            else if (sign == "-")
+                res.first.emplace_back(Op::Sub, get_register('a', dst), rhs);
+            else
+                res.first.emplace_back(Op::Imul, get_register('a', dst), rhs);
+
+            store_from_a();
+        }
+        else if (sign == "/" || sign == "%")
+        {
+            if (dst->ele_size != 4 && dst->ele_size != 8)
+                throw std::runtime_error("Dzielenie wymaga typu liczba");
+
+            load_operand(beg, 'a', dst->ele_size);
+            res.first.emplace_back(dst->ele_size == 4 ? Op::Cdq : Op::Cqo);
+
+            std::string rhs;
+            if (is_num(end))
+            {
+                res.first.emplace_back(Op::Mov, get_register('c', dst), end);
+                rhs = get_register('c', dst);
+            }
+            else
+                rhs = alu_operand(end, dst->ele_size);
+
+            res.first.emplace_back(Op::Idiv, rhs);
+            if (sign == "%")
+                res.first.emplace_back(Op::Mov, get_register('a', dst), get_register('d', dst));
+
+            store_from_a();
+        }
+        else if (sign == "<<" || sign == ">>")
+        {
+            load_operand(beg, 'a', dst->ele_size);
+            if (is_num(end))
+                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst), end);
+            else
+            {
+                load_operand(end, 'c', operand_size(end, 4));
+                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst), "cl");
+            }
+            store_from_a();
+        }
+        else
+            throw std::runtime_error("Nieznana operacja: " + sign);
+    }
+    else if (node->name == "zapisz")
+    {
+        if (is_num(node->arg[0]))
+        {
+            std::string full_adres;
+
+            if (is_num(node->arg[2]))
+            {
+                full_adres = prefix_gen(mem[node->arg[1]]) + "[rbp-" + std::to_string(mem[node->arg[1]]->addres - mem[node->arg[1]]->ele_size * stoi(node->arg[2])) + "]";
+            }
+            else
+            {
+                load_index_to_rcx(res.first, require_mem(node->arg[2]));
+                res.first.emplace_back(Op::Lea, "rdx", get_nude_adres(mem[node->arg[1]]));
+                full_adres = prefix_gen(mem[node->arg[1]]) + "[rdx + rcx*" + std::to_string(mem[node->arg[1]]->ele_size) + "]";
+            }
+
+            res.first.emplace_back(Op::Mov, full_adres, node->arg[0]);
+        }
+
+        else
+        {
+            res.first.emplace_back(Op::Mov, get_register('a', mem[node->arg[1]]), get_adres(mem[node->arg[0]]));
+            std::string full_adres;
+
+            if (is_num(node->arg[2]))
+            {
+                full_adres = prefix_gen(mem[node->arg[1]]) + "[rbp-" + std::to_string(mem[node->arg[1]]->addres - mem[node->arg[1]]->ele_size * stoi(node->arg[2])) + "]";
+            }
+            else
+            {
+                load_index_to_rcx(res.first, require_mem(node->arg[2]));
+                res.first.emplace_back(Op::Lea, "rdx", get_nude_adres(mem[node->arg[1]]));
+                full_adres = prefix_gen(mem[node->arg[1]]) + "[rdx + rcx*" + std::to_string(mem[node->arg[1]]->ele_size) + "]";
+            }
+
+            res.first.emplace_back(Op::Mov, full_adres, get_register('a', mem[node->arg[1]]));
+        }
+    }
+    else if (node->name == "wczytaj")
+    {
+        Varbile *dst = mem[node->arg[0]];
+        Varbile *arr = mem[node->arg[1]];
+
+        std::string full_adres;
+
+        if (is_num(node->arg[2]))
+        {
+            full_adres = prefix_gen(arr) + "[rbp-" + std::to_string(arr->addres - arr->ele_size * stoi(node->arg[2])) + "]";
+        }
+        else
+        {
+            load_index_to_rcx(res.first, require_mem(node->arg[2]));
+            res.first.emplace_back(Op::Lea, "rdx", get_nude_adres(arr));
+
+            full_adres = prefix_gen(arr) + "[rdx + rcx*" + std::to_string(arr->ele_size) + "]";
+        }
+
+        res.first.emplace_back(Op::Mov, get_register('a', arr), full_adres);
+        res.first.emplace_back(Op::Mov, get_adres(dst), get_register('a', arr));
+    }
+    else if (node->name == "punkt")
+    {
+        res.first.emplace_back(Op::Label, node->arg[0]);
+    }
+    else if (node->name == "idzjezeli")
+    {
+        if (is_num(node->arg[0]))
+        {
+            res.first.emplace_back(Op::Mov, "al", node->arg[0]);
+            res.first.emplace_back(Op::Cmp, "al", "0");
+        }
+        else
+            res.first.emplace_back(Op::Cmp, get_adres(require_mem(node->arg[0])), "0");
+        res.first.emplace_back(Op::Jne, node->arg[1]);
+    }
+    else if (node->name == "idz")
+    {
+        res.first.emplace_back(Op::Jmp, node->arg[0]);
+    }
+    else if (node->name == "zakoncz")
+    {
+        if (is_num(node->arg[0]))
+            res.first.emplace_back(Op::Mov, "eax", node->arg[0]);
+        else
+            res.first.emplace_back(Op::Mov, "eax", get_adres(require_mem(node->arg[0])));
+    }
+    else if (node->name == "enter_point")
+    {
+        res.first.emplace_back(Op::Directive, ".intel_syntax noprefix");
+        res.first.emplace_back(Op::Directive, ".global main");
+        res.first.emplace_back(Op::Label, "main");
+
+        res.first.emplace_back(Op::Push, "rbp");
+        res.first.emplace_back(Op::Mov, "rbp", "rsp");
+        res.first.emplace_back(Op::Sub, "rsp", std::to_string(max_ofs));
+
+        res.second.emplace_back(Op::Add, "rsp", std::to_string(max_ofs));
+        res.second.emplace_back(Op::Pop, "rbp");
+        res.second.emplace_back(Op::Ret);
+    }
+    else if (node->name != "stworz" && node->name != "usun")
+        throw std::runtime_error("Nieznana komenda: " + node->name);
+
+    return res;
+}
+
+void Generator::generator_step(Tree::Node *node)
+{
+    std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> temp = move(gen_command(node));
+
+    for (AsmCommand &a : temp.first)
+        body.push_back(a);
+
+    for (const auto &n : node->child)
+        generator_step(n);
+
+    for (AsmCommand &a : temp.second)
+        body.push_back(a);
+}
+
+void Generator::mem_aloc(Tree::Node *node)
+{
+    if (node->name == "stworz")
+    {
+        if (mem.count(node->arg.back()))
+            throw std::runtime_error("Ponowna deklaracja: " + node->arg.back());
+
+        std::string type = node->arg[0];
+        if (node->arg[0] == "tablica")
+            type += "_" + node->arg[1];
+
+        Varbile *var = new Varbile(node->arg.back(), type);
+
+        std::size_t size = 1;
+        if (node->arg[0] == "tablica")
+        {
+            size = stoi(node->arg[2]);
+            size *= typ_to_size[node->arg[1]];
+            var->ele_size = typ_to_size[node->arg[1]];
+        }
+        else
+        {
+            size = typ_to_size[node->arg[0]];
+            var->ele_size = typ_to_size[node->arg[0]];
+        }
+
+        var->size = size;
+        ofs += size;
+        var->addres = ofs;
+
+        max_ofs = std::max(max_ofs, ofs);
+
+        mem[node->arg.back()] = var;
+    }
+    else if (node->name == "usun")
+    {
+        const std::string &name = node->arg.back();
+
+        if (!mem.count(name))
+            throw std::runtime_error("Ponowne usunięcie: " + name);
+
+        Varbile *var = mem[name];
+        ofs -= var->size;
+    }
+
+    for (const auto &n : node->child)
+        mem_aloc(n);
+}
+
+bool Generator::worth_storing(const std::string &s, const std::size_t beg) const
+{
+    for (std::size_t i = beg + 1; i < body.size(); i++)
+    {
+        const AsmCommand &cur = body[i];
+        if (cur.op != Op::Directive && cur.op != Op::Label)
+            if (!modify.count(cur.op))
+                throw std::runtime_error("Nieznana komenda: " + cur.emit());
+
+        auto [p1, p2] = modify[cur.op];
+        if (cur.a == s)
+            return !p1;
+        if (cur.b == s)
+            return !p2;
+    }
+    return false;
+}
+
+bool Generator::Piphole_opt()
+{
+    bool changed = 0;
+    std::unordered_map<char, std::string> registers;
+    bool known_cmp = false;
+    std::pair<std::string, std::string> last_cmp;
+
+    auto clear_known_cmp = [&]()
+    {
+        known_cmp = false;
+        last_cmp = {};
+    };
+
+    auto find = [&](const std::string &s)
+    { for (const auto &[p, v] : registers) if (v == s) return p; return '~'; };
+
+    auto find_except = [&](const std::string &s, char except)
+    { for (const auto &[p, v] : registers) if (p != except && v == s) return p; return '~'; };
+
+    auto value_of = [&](const std::string &s)
+    {
+        char id = reg_id(s);
+        if (id != '~' && registers.count(id))
+            return registers[id];
+        return s;
+    };
+
+    auto erase_value = [&](const std::string &s)
+    {
+        for (auto it = registers.begin(); it != registers.end();)
+        {
+            if (it->second == s)
+                it = registers.erase(it);
+            else
+                ++it;
+        }
+    };
+
+    auto cmp_uses_changed_memory = [&](const std::string &s)
+    {
+        return known_cmp && is_memory(s) && (last_cmp.first == s || last_cmp.second == s);
+    };
+
+    auto cmp_uses_any_memory = [&]()
+    {
+        return known_cmp && (is_memory(last_cmp.first) || is_memory(last_cmp.second));
+    };
+
+    auto cmp_uses_changed_register = [&](char id)
+    {
+        if (!known_cmp || id == '~')
+            return false;
+        return reg_id(last_cmp.first) == id || reg_id(last_cmp.second) == id;
+    };
+
+    auto register_for_memory = [&](const std::string &s, char except = '~')
+    {
+        char id = find_except(s, except);
+        if (id == '~' && except == '~')
+            id = find(s);
+        if (id == '~')
+            return std::string();
+        return get_register(id, prefix_idn(s));
+    };
+
+    auto replace_rhs_memory = [&](AsmCommand &cmd)
+    {
+        if (!can_replace_rhs_memory(cmd.op) || !is_static_stack_memory(cmd.b))
+            return false;
+
+        std::string reg = register_for_memory(cmd.b);
+        if (reg.empty())
+            return false;
+
+        cmd.b = reg;
+        return true;
+    };
+
+    auto replace_cmp_memory = [&](AsmCommand &cmd)
+    {
+        bool local_changed = false;
+        if (is_static_stack_memory(cmd.a))
+        {
+            std::string reg = register_for_memory(cmd.a);
+            if (!reg.empty())
+            {
+                cmd.a = reg;
+                local_changed = true;
+            }
+        }
+        if (is_static_stack_memory(cmd.b))
+            local_changed |= replace_rhs_memory(cmd);
+        return local_changed;
+    };
+
+    auto remember_register_write = [&](const AsmCommand &cmd)
+    {
+        char dst = reg_id(cmd.a);
+        if (dst == '~')
+            return;
+
+        if (cmp_uses_changed_register(dst))
+            clear_known_cmp();
+
+        registers.erase(dst);
+        if (cmd.op == Op::Mov && is_static_stack_memory(cmd.b))
+            registers[dst] = cmd.b;
+        else if (cmd.op == Op::Mov)
+        {
+            char src = reg_id(cmd.b);
+            if (src != '~' && registers.count(src))
+                registers[dst] = registers[src];
+        }
+    };
+
+    auto forget_implicit_register_writes = [&](const AsmCommand &cmd)
+    {
+        for (char id : {'a', 'b', 'c', 'd'})
+        {
+            if (!writes_register(cmd, id))
+                continue;
+
+            if (cmp_uses_changed_register(id))
+                clear_known_cmp();
+            registers.erase(id);
+        }
+    };
+
+    auto remember_memory_write = [&](const AsmCommand &cmd)
+    {
+        if (!is_memory(cmd.a))
+            return;
+
+        if (!is_static_stack_memory(cmd.a))
+        {
+            registers.clear();
+            if (cmp_uses_any_memory())
+                clear_known_cmp();
+            return;
+        }
+
+        erase_value(cmd.a);
+        if (cmp_uses_changed_memory(cmd.a))
+            clear_known_cmp();
+
+        char src = reg_id(cmd.b);
+        if (src != '~')
+            registers[src] = cmd.a;
+    };
+
+    for (std::size_t i = 0; i < body.size(); i++)
+    {
+        AsmCommand &cur = body[i];
+        if (cur.op == Op::Label)
+        {
+            registers.clear();
+            clear_known_cmp();
+            continue;
+        }
+
+        if (cur.op == Op::Mov && is_register(cur.a))
+        {
+            char dst = reg_id(cur.a);
+
+            if (is_static_stack_memory(cur.b) && registers.count(dst) && registers[dst] == cur.b)
+            {
+                body.erase(body.begin() + i);
+                i--;
+                changed = 1;
+                continue;
+            }
+
+            if (!register_used_before_write(body, dst, i + 1))
+            {
+                body.erase(body.begin() + i);
+                i--;
+                changed = 1;
+                continue;
+            }
+        }
+
+        if (cur.op == Op::Mov && is_register(cur.a) && is_register(cur.b) && i + 1 < body.size())
+        {
+            AsmCommand &next = body[i + 1];
+            if (next.op == Op::Mov && is_static_stack_memory(next.a) && next.b == cur.a && !register_used_before_write(body, reg_id(cur.a), i + 2))
+            {
+                next.b = cur.b;
+                body.erase(body.begin() + i);
+                i--;
+                changed = 1;
+                continue;
+            }
+        }
+
+        if (cur.op == Op::Mov && is_register(cur.a) && is_static_stack_memory(cur.b))
+        {
+            std::string reg = register_for_memory(cur.b, reg_id(cur.a));
+            if (!reg.empty())
+            {
+                cur.b = reg;
+                changed = 1;
+            }
+        }
+        else if (cur.op == Op::Cmp)
+        {
+            changed |= replace_cmp_memory(cur);
+        }
+        else
+        {
+            changed |= replace_rhs_memory(cur);
+        }
+
+        if (cur.op == Op::Cmp && is_register(cur.a) && i > 0)
+        {
+            const AsmCommand &prev = body[i - 1];
+            if (prev.op == Op::Mov && prev.a == cur.a && can_fold_cmp_first_operand(prev.b, cur.b) && !operand_mentions_register(prev.b, reg_id(cur.a)))
+            {
+                cur.a = prev.b;
+                changed = 1;
+            }
+        }
+
+        if (known_cmp && set_to_jump.count(cur.op) && i + 2 < body.size())
+        {
+            AsmCommand next1 = body[i + 1];
+            AsmCommand next2 = body[i + 2];
+
+            bool zero_check = (next1.op == Op::Cmp && next1.b == "0" && cur.a == next1.a) ||
+                              (next1.op == Op::Test && next1.a == cur.a && next1.b == cur.a);
+
+            if (zero_check && next2.op == Op::Jne)
+            {
+                Op opp = set_to_jump[cur.op];
+
+                cur = AsmCommand(opp, next2.a);
+                body.erase(body.begin() + i + 1);
+                body.erase(body.begin() + i + 1);
+
+                changed = 1;
+                continue;
+            }
+        }
+
+        if (cur.op == Op::Cmp)
+        {
+            std::pair<std::string, std::string> cur_cmp = {value_of(cur.a), value_of(cur.b)};
+            if (known_cmp && cmp_operands_equal(last_cmp, cur_cmp))
+            {
+                body.erase(body.begin() + i);
+                i--;
+                changed = 1;
+                continue;
+            }
+
+            known_cmp = true;
+            last_cmp = cur_cmp;
+
+            if (is_register(cur.a) && cur.b == "0")
+            {
+                cur.op = Op::Test;
+                cur.b = cur.a;
+                changed = 1;
+            }
+        }
+        else if (cur.op == Op::Test && cur.a == cur.b && is_register(cur.a))
+        {
+            known_cmp = true;
+            last_cmp = {value_of(cur.a), "0"};
+        }
+        else if (may_change_flags(cur.op))
+            clear_known_cmp();
+
+        if (cur.op == Op::Mov && is_static_stack_memory(cur.a))
+            if (!worth_storing(cur.a, i))
+            {
+                body.erase(body.begin() + i);
+                i--;
+                changed = 1;
+                continue;
+            }
+
+        if (cur.op == Op::Mov && is_memory(cur.a))
+            remember_memory_write(cur);
+        else if (cur.op == Op::Mov && is_register(cur.a))
+            remember_register_write(cur);
+        else if (writes_register(cur, reg_id(cur.a)))
+            remember_register_write(cur);
+        else
+            forget_implicit_register_writes(cur);
+
+        if (breaks_local_flow(cur.op))
+        {
+            registers.clear();
+            clear_known_cmp();
+        }
+    }
+    return changed;
+}
+
+Generator::Generator(Tree tree)
+{
+    mem_aloc(tree.get_beg());
+    generator_step(tree.get_beg());
 }
