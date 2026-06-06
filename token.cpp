@@ -14,15 +14,15 @@ namespace
         {"end", 0},
         {"dopoki", 1},
         {"jezeli", 1},
-        //{"albojezeli", 1}, do implmentacji
-        //{"albo", 0},
+        {"albojezeli", 1},
+        {"albo", 0},
         {"punkt", 1},
         {"idz", 1},
         {"wczytaj", 3},
         {"zapisz", 3},
         {"zakoncz", 1}};
 
-    const std::unordered_set<std::string> logi = {"dopoki", "jezeli"};
+    const std::unordered_set<std::string> logi = {"dopoki", "jezeli", "albojezeli"};
     const std::unordered_set<std::string> arit = {"ustaw"};
     const std::unordered_set<std::string> it_depends = {"stworz"};
 
