@@ -1,16 +1,28 @@
 #pragma once
 
-#include <cstddef>
 #include <string>
-#include <utility>
 
-struct Variable {
+enum class Typ
+{
+    liczba,
+    logika,
+    tablica_liczba,
+    tablica_logika
+};
+
+struct Varbile
+{
     std::string name;
-    int type = 0;
-    std::size_t size = 0;
-    std::ptrdiff_t memoryAddress = -1;
-    bool temporary = false;
+    Typ type;
 
-    Variable(std::string n, int t);
-    Variable(std::string n, int t, std::ptrdiff_t address, bool temp);
+    std::size_t size = 0;
+    std::size_t ele_size = 0;
+
+    std::size_t addres;
+
+    static Typ convert(std::string s);
+
+    Varbile(const std::string &name, const std::string &type) : name(name), type(convert(type)) {}
+    Varbile(const std::string &type) : type(convert(type)) {}
+    Varbile(const Typ type) : type(type) {}
 };
