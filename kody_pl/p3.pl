@@ -1,14 +1,12 @@
-stworz tablica liczba 15 tab
-ustaw tab[0] 1
-ustaw tab[1] 1
+liczba[15] tab
+tab[0] <- 1
+tab[1] <- 1
 
-stworz liczba i
-ustaw i 0
+liczba i <- 0
 
-dopoki i < 5
-begin
-    ustaw tab[i+2] tab[i] + tab[i+1]
-    ustaw i i+1
-end
+dopoki i < 5 {
+    tab[i+2] <- tab[i] + tab[i+1]
+    i <- i+1
+}
 
 zakoncz tab[6]
