@@ -808,7 +808,7 @@ void Generator::mem_aloc(Tree::Node *node)
         }
 
         var->size = size;
-        std::size_t i = size;
+        int i = size;
 
         while (true)
         {
@@ -816,11 +816,11 @@ void Generator::mem_aloc(Tree::Node *node)
                 stack.push_back(0);
 
             bool is = 0;
-            for (std::size_t j = i; i - size < j; j--)
+            for (int j = i; i - size < j; j--)
                 if (stack[j])
                 {
                     is = 1;
-                    i += std::max(static_cast<long long>(i) - static_cast<long long>(j), 1LL);
+                    i += std::max(i + static_cast<int>(size) - j, 1);
                     break;
                 }
 
