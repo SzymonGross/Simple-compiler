@@ -2,17 +2,21 @@
 #include "token.hpp"
 #include "tree.hpp"
 #include "asm_command.hpp"
+#include "mask.hpp"
 
 #include <sstream>
 #include <vector>
 #include <string>
+#include <iostream>
 
 Compiler::Compiler(std::istream &input)
 {
     Tree tree{};
 
+    std::istringstream temp = mask(input);
+
     std::string line;
-    while (std::getline(input, line))
+    while (std::getline(temp, line))
         tree.append(Token(line));
 
     bool changed = 1;
