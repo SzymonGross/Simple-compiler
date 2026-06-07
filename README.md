@@ -13,6 +13,7 @@ The main goal of this version was to implement AST and idea of transleting langu
 ```text
 .
 ├── main.cpp                            # Program entry point
+├── mask.cpp                            # Converts code from improved syntax to old one
 ├── token.hpp / token.cpp               # Command-line and token parsing
 ├── varible.hpp / varible.cpp           # Variable model
 ├── tree.hpp / tree.cpp                 # Syntax tree and transformations
@@ -47,28 +48,41 @@ Example:
 The toy language uses Polish-inspired commands.
 
 ```text
-stworz <type> <name>
+<type> <name>
     Create a variable with the given type and name.
 
-stworz tablica <type> <size> <name>
+<type> <name> <- <expresion>
+    Create a variable with the given type and name, then assign the value of <expresion> to varible <name>.
+
+<type>[<size>] <name>
     Create an array with the given element type, size, and name.
 
     Supported types:
     - liczba    integer
     - logika    boolean/logical value
 
-ustaw <name> <expression>
+<name> <- <expression>
     Assign the value of <expression> to the variable or array element.
 
 jezeli <expression>
-begin
+{
     Execute the following block only if <expression> is true.
-end
+}
+
+albojezeli <expression>
+{
+    Execute the following block only if <expression> is true and previus jezeli was false.
+}
+
+albo
+{
+    Execute the following block only if all previus jezeli, albojezeli were false.
+}
 
 dopoki <expression>
-begin
+{
     Repeat the following block while <expression> is true.
-end
+}
 
 punkt <name>
     Define a label with the given name.
@@ -97,24 +111,20 @@ This program computes the greatest common divisor of 15 and 12 using repeated
 subtraction.
 
 ```text
-stworz liczba a
-ustaw a 15
+liczba a <- 15
 
-stworz liczba b
-ustaw b 12
+liczba b <- 12
 
-dopoki a!=b
-begin
-    jezeli a<b
-    begin
-        stworz liczba c
-        ustaw c a
-        ustaw a b
-        ustaw b c
-    end
+dopoki a != b {
+    jezeli a < b 
+    {
+        liczba c <- a
+        a <- b
+        b <- c
+    }
 
-    ustaw a a - b
-end
+    a <- a - b
+}
 
 zakoncz a
 ```
@@ -131,24 +141,20 @@ This program uses multiplication, a `dopoki` loop, comparison operators, and a
 logical `||` condition. Compliator is able to optymalize it to single return statment.
 
 ```text
-stworz liczba a
-ustaw a 3
+liczba a <- 3
+liczba b <- 7
 
-stworz liczba b
-ustaw b 7
-
-stworz liczba c
-ustaw c a*b
+liczba c <- a*b
 
 dopoki b > 0
-begin
-    ustaw b b-1
+{
+    b <- b-1
 
     jezeli a > b || b == 5
-    begin
-        ustaw a a+1
-    end
-end
+    {
+        a <- a+1
+    }
+}
 
 zakoncz a
 ```
@@ -164,18 +170,16 @@ exit code: 8
 This program stores Fibonacci numbers in an array and exits with `tab[6]`. Compliator is able to optymalize it to single return statment.
 
 ```text
-stworz tablica liczba 15 tab
-ustaw tab[0] 1
-ustaw tab[1] 1
+liczba[15] tab
+tab[0] <- 1
+tab[1] <- 1
 
-stworz liczba i
-ustaw i 0
+liczba i <- 0
 
-dopoki i < 5
-begin
-    ustaw tab[i+2] tab[i] + tab[i+1]
-    ustaw i i+1
-end
+dopoki i < 5 {
+    tab[i+2] <- tab[i] + tab[i+1]
+    i <- i+1
+}
 
 zakoncz tab[6]
 ```
@@ -191,41 +195,32 @@ exit code: 13
 This program computes sum of digits of number and then classyfies it to category.
 
 ```text
-stworz liczba n
-ustaw n 98765
+liczba n <- 98765
+liczba suma <- 0
 
-stworz liczba suma
-ustaw suma 0
-
-stworz liczba cyfra
-ustaw cyfra 0
+liczba cyfra <- 0
 
 dopoki n > 0
-begin
-    ustaw cyfra n % 10
-    ustaw suma suma + cyfra
-    ustaw n n / 10
-end
+{
+    cyfra <- n%10
+    suma <-+ cyfra
+    n <-/ 10
+}
 
-stworz liczba wynik
-ustaw wynik 0
+liczba wynik <- 0
 
-jezeli suma < 10
-begin
-    ustaw wynik 1
-end
-albojezeli suma < 25
-begin
-    ustaw wynik 2
-end
-albojezeli suma < 40
-begin
-    ustaw wynik 3
-end
-albo
-begin
-    ustaw wynik 4
-end
+jezeli suma < 10{
+    wynik <- 1
+}
+albojezeli suma < 25{
+    wynik <- 2
+}
+albojezeli suma < 40 {
+    wynik <- 3
+}
+albo{
+    wynik <- 4
+}
 
 zakoncz wynik
 ```
