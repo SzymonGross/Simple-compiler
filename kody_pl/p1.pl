@@ -1,20 +1,16 @@
-stworz liczba a
-ustaw a 15
+liczba a <- 15
 
-stworz liczba b
-ustaw b 12
+liczba b <- 12
 
-dopoki a!=b
-begin
-    jezeli a<b
-    begin
-        stworz liczba c
-        ustaw c a
-        ustaw a b
-        ustaw b c
-    end
+dopoki a != b {
+    jezeli a < b 
+    {
+        liczba c <- a
+        a <- b
+        b <- c
+    }
 
-    ustaw a a - b
-end
+    a <- a - b
+}
 
 zakoncz a
