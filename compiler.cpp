@@ -11,45 +11,93 @@
 
 Compiler::Compiler(std::istream &input)
 {
-    Tree tree{};
+    import.emplace_back(Op::Directive, ".intel_syntax noprefix");
+    import.emplace_back(Op::Directive, ".global main");
+
+    code.emplace_back(Op::Directive, ".section .text");
+
+    std::vector<Tree> forest;
 
     std::istringstream temp = mask(input);
 
     std::string line;
     while (std::getline(temp, line))
-        tree.append(Token(line));
-
-    bool changed = 1;
-    while (changed)
     {
-        changed = 0;
-        changed |= tree.loop_unrolling();
-        tree.traversal();
-        changed |= tree.array_access_lowering();
+        std::cout << line << "\n";
+        Token tok(line);
 
-        changed |= tree.constant_folding();
-        changed |= tree.identity_simplification();
-        changed |= tree.branch_cutting();
-        changed |= tree.assignment_combining();
-        changed |= tree.varible_cleaner();
-        changed |= tree.neg_simplification();
-        changed |= tree.identity_simplification();
+        if (tok.name == "funkcja")
+        {
+            fun_type[tok.arg[1]] = tok.arg[0];
+
+            for (int i = 2; i < tok.arg.size(); i++)
+                if (i % 2 == 0)
+                    fun_args[tok.arg[1]].push_back(tok.arg[i]);
+
+            forest.emplace_back();
+            forest.back().get_beg()->arg = tok.arg;
+        }
+        else
+            forest.back().append(tok);
     }
 
-    tree.release_dead_variables();
-    Generator gen(tree);
-
-    changed = 1;
-    while (changed)
+    for (Tree tree : forest)
     {
-        changed = 0;
-        changed |= gen.Piphole_opt();
+        tree.fun_type = fun_type;
+        tree.fun_args = fun_args;
+
+        tree.print();
+        bool changed = 1;
+        while (changed)
+        {
+            changed = 0;
+            changed |= tree.loop_unrolling();
+            tree.traversal();
+
+            changed |= tree.array_access_lowering();
+            changed |= tree.constant_folding();
+            changed |= tree.identity_simplification();
+            changed |= tree.branch_cutting();
+            changed |= tree.assignment_combining();
+            changed |= tree.varible_cleaner();
+            changed |= tree.neg_simplification();
+            changed |= tree.identity_simplification();
+        }
+
+        tree.release_dead_variables();
+
+        tree.print();
+
+        Generator gen(tree);
+
+        changed = 1;
+        while (changed)
+        {
+            changed = 0;
+            changed |= gen.Piphole_opt();
+        }
+
+        for (const auto &a : gen.body)
+            code.push_back(a);
     }
-    code = move(gen.body);
 }
 
 void Compiler::write(std::ostream &output) const
 {
+    for (const AsmCommand &a : import)
+    {
+        if (a.op != Op::Directive && a.op != Op::Label)
+            output << "    " << a.emit() << "\n";
+        else
+            output << a.emit() << "\n";
+    }
+    for (const AsmCommand &a : data)
+    {
+        if (a.op != Op::Directive && a.op != Op::Label)
+            output << "    " << a.emit() << "\n";
+        else
+            output << a.emit() << "\n";
+    }
     for (const AsmCommand &a : code)
     {
         if (a.op != Op::Directive && a.op != Op::Label)

@@ -1,5 +1,7 @@
 .intel_syntax noprefix
 .global main
+
+.section .text
 main:
     push rbp
     mov rbp, rsp

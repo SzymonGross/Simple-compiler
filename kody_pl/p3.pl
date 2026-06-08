@@ -1,3 +1,4 @@
+poczontek{
 liczba[15] tab
 tab[0] <- 1
 tab[1] <- 1
@@ -10,3 +11,4 @@ dopoki i < 5 {
 }
 
 zakoncz tab[6]
+}

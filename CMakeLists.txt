@@ -9,6 +9,7 @@ add_executable(komp
     tree.cpp
     asm_command.cpp
     varible.cpp
+    mask.cpp
 )
 
 target_compile_features(komp PRIVATE cxx_std_17)

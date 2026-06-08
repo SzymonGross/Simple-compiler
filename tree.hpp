@@ -9,6 +9,9 @@
 class Tree
 {
 public:
+    std::unordered_map<std::string, std::string> fun_type;
+    std::unordered_map<std::string, std::vector<std::string>> fun_args;
+
     struct Node
     {
         Node *parent;

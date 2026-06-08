@@ -1,19 +1,20 @@
 # Simple Compiler
 
-This is a simple compiler written in C++.
+This project is a refactored implementation of a simple compiler written in C++.
 
 The compiler translates a small Polish-inspired language into assembly-like
 instructions. It supports variables, arithmetic expressions, logical
 expressions, conditional blocks, loops, labels, jumps, and simple arrays.
 
-The main goal of this version was to implement AST and idea of transleting language step by step to simpler intermidate language.
+The main goal of this version was to clean up the project structure, separate
+responsibilities between components, and make higher-level control flow compile
+down to lower-level jump instructions.
 
 # Project Structure
 
 ```text
 .
 ├── main.cpp                            # Program entry point
-├── mask.cpp                            # Converts code from improved syntax to old one
 ├── token.hpp / token.cpp               # Command-line and token parsing
 ├── varible.hpp / varible.cpp           # Variable model
 ├── tree.hpp / tree.cpp                 # Syntax tree and transformations
@@ -48,41 +49,28 @@ Example:
 The toy language uses Polish-inspired commands.
 
 ```text
-<type> <name>
+stworz <type> <name>
     Create a variable with the given type and name.
 
-<type> <name> <- <expresion>
-    Create a variable with the given type and name, then assign the value of <expresion> to varible <name>.
-
-<type>[<size>] <name>
+stworz tablica <type> <size> <name>
     Create an array with the given element type, size, and name.
 
     Supported types:
     - liczba    integer
     - logika    boolean/logical value
 
-<name> <- <expression>
+ustaw <name> <expression>
     Assign the value of <expression> to the variable or array element.
 
 jezeli <expression>
-{
+begin
     Execute the following block only if <expression> is true.
-}
-
-albojezeli <expression>
-{
-    Execute the following block only if <expression> is true and previus jezeli was false.
-}
-
-albo
-{
-    Execute the following block only if all previus jezeli, albojezeli were false.
-}
+end
 
 dopoki <expression>
-{
+begin
     Repeat the following block while <expression> is true.
-}
+end
 
 punkt <name>
     Define a label with the given name.
@@ -111,20 +99,24 @@ This program computes the greatest common divisor of 15 and 12 using repeated
 subtraction.
 
 ```text
-liczba a <- 15
+stworz liczba a
+ustaw a 15
 
-liczba b <- 12
+stworz liczba b
+ustaw b 12
 
-dopoki a != b {
-    jezeli a < b 
-    {
-        liczba c <- a
-        a <- b
-        b <- c
-    }
+dopoki a!=b
+begin
+    jezeli a<b
+    begin
+        stworz liczba c
+        ustaw c a
+        ustaw a b
+        ustaw b c
+    end
 
-    a <- a - b
-}
+    ustaw a a - b
+end
 
 zakoncz a
 ```
@@ -138,23 +130,27 @@ exit code: 3
 ## p2.pl - Loop with logical condition
 
 This program uses multiplication, a `dopoki` loop, comparison operators, and a
-logical `||` condition. Compliator is able to optymalize it to single return statment.
+logical `||` condition.
 
 ```text
-liczba a <- 3
-liczba b <- 7
+stworz liczba a
+ustaw a 3
 
-liczba c <- a*b
+stworz liczba b
+ustaw b 7
+
+stworz liczba c
+ustaw c a*b
 
 dopoki b > 0
-{
-    b <- b-1
+begin
+    ustaw b b-1
 
     jezeli a > b || b == 5
-    {
-        a <- a+1
-    }
-}
+    begin
+        ustaw a a+1
+    end
+end
 
 zakoncz a
 ```
@@ -167,19 +163,21 @@ exit code: 8
 
 ## p3.pl - Fibonacci numbers with an array
 
-This program stores Fibonacci numbers in an array and exits with `tab[6]`. Compliator is able to optymalize it to single return statment.
+This program stores Fibonacci numbers in an array and exits with `tab[6]`.
 
 ```text
-liczba[15] tab
-tab[0] <- 1
-tab[1] <- 1
+stworz tablica liczba 15 tab
+ustaw tab[0] 1
+ustaw tab[1] 1
 
-liczba i <- 0
+stworz liczba i
+ustaw i 0
 
-dopoki i < 5 {
-    tab[i+2] <- tab[i] + tab[i+1]
-    i <- i+1
-}
+dopoki i < 5
+begin
+    ustaw tab[i+2] tab[i] + tab[i+1]
+    ustaw i i+1
+end
 
 zakoncz tab[6]
 ```
@@ -190,43 +188,21 @@ Expected result:
 exit code: 13
 ```
 
-## p4.pl - Digit sum and nested if statments
+# What I Learned
 
-This program computes sum of digits of number and then classyfies it to category.
+This project helped me understand how higher-level control-flow constructs can
+be translated into lower-level jump instructions.
 
-```text
-liczba n <- 98765
-liczba suma <- 0
+The most interesting part was handling nested blocks correctly: each `end` has
+to match the nearest currently open `begin`, which requires keeping track of
+block structure during compilation.
 
-liczba cyfra <- 0
+I also learned how expression parsing, temporary variables, arrays, and simple
+optimizations affect the generated assembly.
 
-dopoki n > 0
-{
-    cyfra <- n%10
-    suma <-+ cyfra
-    n <-/ 10
-}
+# Technologies
 
-liczba wynik <- 0
-
-jezeli suma < 10{
-    wynik <- 1
-}
-albojezeli suma < 25{
-    wynik <- 2
-}
-albojezeli suma < 40 {
-    wynik <- 3
-}
-albo{
-    wynik <- 4
-}
-
-zakoncz wynik
-```
-
-Expected result:
-
-```text
-exit code: 3
-```
+- C++
+- CMake
+- Compiler design basics
+- Control-flow compilation

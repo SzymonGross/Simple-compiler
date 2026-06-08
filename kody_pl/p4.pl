@@ -1,3 +1,4 @@
+poczontek{
 liczba n <- 98765
 liczba suma <- 0
 
@@ -26,3 +27,4 @@ albo{
 }
 
 zakoncz wynik
+}

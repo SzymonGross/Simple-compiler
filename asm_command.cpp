@@ -210,9 +210,64 @@ namespace
         return '~';
     }
 
+    std::size_t register_size(const std::string &s)
+    {
+        if (reg_id(s) != '~')
+        {
+            if (s.size() == 2 && s[1] == 'l')
+                return 1;
+            if (s.size() == 2 && s[1] == 'x')
+                return 2;
+            if (s.size() == 3 && s[0] == 'e')
+                return 4;
+            if (s.size() == 3 && s[0] == 'r')
+                return 8;
+        }
+
+        const std::vector<std::string> ext = {"r8", "r9", "r10", "r11"};
+        for (const std::string &base : ext)
+        {
+            if (s == base)
+                return 8;
+            if (s == base + "b")
+                return 1;
+            if (s == base + "w")
+                return 2;
+            if (s == base + "d")
+                return 4;
+        }
+
+        return 0;
+    }
+
     bool is_register(const std::string &s)
     {
-        return reg_id(s) != '~';
+        return register_size(s) != 0;
+    }
+
+    std::string resize_register(const std::string &s, std::size_t size)
+    {
+        char id = reg_id(s);
+        if (id != '~')
+            return get_register(id, size);
+
+        const std::vector<std::string> ext = {"r8", "r9", "r10", "r11"};
+        for (const std::string &base : ext)
+        {
+            if (s == base || s == base + "b" || s == base + "w" || s == base + "d")
+            {
+                if (size == 1)
+                    return base + "b";
+                if (size == 2)
+                    return base + "w";
+                if (size == 4)
+                    return base + "d";
+                if (size == 8)
+                    return base;
+            }
+        }
+
+        return s;
     }
 
     bool is_memory(const std::string &s)
@@ -397,11 +452,11 @@ std::string AsmCommand::emit() const
     case Op::Pop:
         return "pop " + a;
     case Op::Ret:
-        return "ret";
+        return "ret\n";
     case Op::Label:
         return a + ":";
     case Op::Directive:
-        return a;
+        return a + "";
     case Op::Cmp:
         return "cmp " + a + ", " + b;
     case Op::Jle:
@@ -451,7 +506,7 @@ std::string AsmCommand::emit() const
     case Op::Movzx:
         return "movzx " + a + ", " + b;
     case Op::Call:
-        return "call " + a;
+        return "call " + a + "\n";
     case Op::Test:
         return "test " + a + ", " + b;
     }
@@ -473,10 +528,12 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
 
     if (node->name == "ustaw")
     {
-        if (node->arg.size() < 2 || !mem.count(node->arg[0]))
+        if (node->arg.size() < 2 || (!mem.count(node->arg[0]) && !is_register(node->arg[0])))
             throw std::runtime_error("Bledna komenda ustaw");
 
-        Varbile *dst = mem[node->arg[0]];
+        Varbile *dst = mem.count(node->arg[0]) ? mem[node->arg[0]] : nullptr;
+        bool dst_is_register = dst == nullptr;
+        std::size_t dst_size = dst_is_register ? register_size(node->arg[0]) : dst->ele_size;
 
         auto require_var = [&](const std::string &name) -> Varbile *
         {
@@ -485,6 +542,9 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
 
         auto operand_size = [&](const std::string &operand, std::size_t fallback)
         {
+            if (is_register(operand))
+                return register_size(operand);
+
             auto it = mem.find(operand);
             if (it != mem.end())
                 return it->second->ele_size;
@@ -496,6 +556,32 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
             if (is_num(operand))
             {
                 res.first.emplace_back(Op::Mov, get_register(reg, size), operand);
+                return;
+            }
+
+            if (is_register(operand))
+            {
+                std::size_t src_size = register_size(operand);
+                std::string dst_reg = get_register(reg, size);
+
+                if (src_size == size)
+                {
+                    std::string src_reg = resize_register(operand, size);
+                    if (src_reg != dst_reg)
+                        res.first.emplace_back(Op::Mov, dst_reg, src_reg);
+                }
+                else if (src_size < size)
+                {
+                    if (src_size == 4)
+                        res.first.emplace_back(Op::Mov, get_register(reg, 4), resize_register(operand, 4));
+                    else
+                        res.first.emplace_back(Op::Movzx, dst_reg, resize_register(operand, src_size));
+                }
+                else
+                {
+                    res.first.emplace_back(Op::Mov, dst_reg, resize_register(operand, size));
+                }
+
                 return;
             }
 
@@ -511,10 +597,60 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
             }
         };
 
+        auto load_operand_to_register = [&](const std::string &target, const std::string &operand, std::size_t size)
+        {
+            std::string dst_reg = resize_register(target, size);
+            if (is_num(operand))
+            {
+                res.first.emplace_back(Op::Mov, dst_reg, operand);
+                return;
+            }
+
+            if (is_register(operand))
+            {
+                std::size_t src_size = register_size(operand);
+                if (src_size == size)
+                {
+                    std::string src_reg = resize_register(operand, size);
+                    if (src_reg != dst_reg)
+                        res.first.emplace_back(Op::Mov, dst_reg, src_reg);
+                }
+                else if (src_size < size)
+                {
+                    if (src_size == 4)
+                        res.first.emplace_back(Op::Mov, resize_register(target, 4), resize_register(operand, 4));
+                    else
+                        res.first.emplace_back(Op::Movzx, dst_reg, resize_register(operand, src_size));
+                }
+                else
+                {
+                    res.first.emplace_back(Op::Mov, dst_reg, resize_register(operand, size));
+                }
+                return;
+            }
+
+            Varbile *src = require_var(operand);
+            if (src->ele_size == size)
+                res.first.emplace_back(Op::Mov, dst_reg, get_adres(src));
+            else if (src->ele_size < size)
+                res.first.emplace_back(Op::Movzx, dst_reg, get_adres(src));
+            else
+                res.first.emplace_back(Op::Mov, resize_register(target, src->ele_size), get_adres(src));
+        };
+
         auto alu_operand = [&](const std::string &operand, std::size_t size)
         {
             if (is_num(operand))
                 return operand;
+
+            if (is_register(operand))
+            {
+                if (register_size(operand) == size)
+                    return resize_register(operand, size);
+
+                load_operand(operand, 'c', size);
+                return get_register('c', size);
+            }
 
             Varbile *src = require_var(operand);
             if (src->ele_size == size)
@@ -526,12 +662,31 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
 
         auto store_from_a = [&]()
         {
-            res.first.emplace_back(Op::Mov, get_adres(dst), get_register('a', dst));
+            if (dst_is_register)
+            {
+                std::string dst_reg = resize_register(node->arg[0], dst_size);
+                std::string src_reg = get_register('a', dst_size);
+                if (dst_reg != src_reg)
+                    res.first.emplace_back(Op::Mov, dst_reg, src_reg);
+            }
+            else
+                res.first.emplace_back(Op::Mov, get_adres(dst), get_register('a', dst));
         };
 
         auto store_bool_from_al = [&]()
         {
-            if (dst->ele_size == 1)
+            if (dst_is_register)
+            {
+                if (dst_size == 1)
+                {
+                    std::string dst_reg = resize_register(node->arg[0], 1);
+                    if (dst_reg != "al")
+                        res.first.emplace_back(Op::Mov, dst_reg, "al");
+                }
+                else
+                    res.first.emplace_back(Op::Movzx, resize_register(node->arg[0], dst_size), "al");
+            }
+            else if (dst->ele_size == 1)
                 res.first.emplace_back(Op::Mov, get_adres(dst), "al");
             else
             {
@@ -563,16 +718,26 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
         if (!split_expr(expr, beg, sign, end))
         {
             if (is_num(expr))
-                res.first.emplace_back(Op::Mov, get_adres(dst), expr);
+            {
+                if (dst_is_register)
+                    res.first.emplace_back(Op::Mov, resize_register(node->arg[0], dst_size), expr);
+                else
+                    res.first.emplace_back(Op::Mov, get_adres(dst), expr);
+            }
             else
             {
-                load_operand(expr, 'a', dst->ele_size);
-                store_from_a();
+                if (dst_is_register)
+                    load_operand_to_register(node->arg[0], expr, dst_size);
+                else
+                {
+                    load_operand(expr, 'a', dst_size);
+                    store_from_a();
+                }
             }
         }
         else if (sign == "!")
         {
-            std::size_t size = operand_size(end, dst->ele_size);
+            std::size_t size = operand_size(end, dst_size);
             load_operand(end, 'a', size);
             res.first.emplace_back(Op::Cmp, get_register('a', size), "0");
             res.first.emplace_back(Op::Sete, "al");
@@ -580,7 +745,7 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
         }
         else if (sign == "==" || sign == "!=" || sign == "<=" || sign == ">=" || sign == "<" || sign == ">")
         {
-            std::size_t size = operand_size(beg, operand_size(end, dst->ele_size));
+            std::size_t size = operand_size(beg, operand_size(end, dst_size));
             load_operand(beg, 'a', size);
             if (is_num(end))
                 res.first.emplace_back(Op::Cmp, get_register('a', size), end);
@@ -594,8 +759,8 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
         }
         else if (sign == "&&" || sign == "||")
         {
-            std::size_t left_size = operand_size(beg, dst->ele_size);
-            std::size_t right_size = operand_size(end, dst->ele_size);
+            std::size_t left_size = operand_size(beg, dst_size);
+            std::size_t right_size = operand_size(end, dst_size);
 
             load_operand(beg, 'a', left_size);
             res.first.emplace_back(Op::Cmp, get_register('a', left_size), "0");
@@ -610,50 +775,50 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
         }
         else if (sign == "+" || sign == "-" || sign == "*")
         {
-            load_operand(beg, 'a', dst->ele_size);
-            std::string rhs = alu_operand(end, dst->ele_size);
+            load_operand(beg, 'a', dst_size);
+            std::string rhs = alu_operand(end, dst_size);
 
             if (sign == "+")
-                res.first.emplace_back(Op::Add, get_register('a', dst), rhs);
+                res.first.emplace_back(Op::Add, get_register('a', dst_size), rhs);
             else if (sign == "-")
-                res.first.emplace_back(Op::Sub, get_register('a', dst), rhs);
+                res.first.emplace_back(Op::Sub, get_register('a', dst_size), rhs);
             else
-                res.first.emplace_back(Op::Imul, get_register('a', dst), rhs);
+                res.first.emplace_back(Op::Imul, get_register('a', dst_size), rhs);
 
             store_from_a();
         }
         else if (sign == "/" || sign == "%")
         {
-            if (dst->ele_size != 4 && dst->ele_size != 8)
+            if (dst_size != 4 && dst_size != 8)
                 throw std::runtime_error("Dzielenie wymaga typu liczba");
 
-            load_operand(beg, 'a', dst->ele_size);
-            res.first.emplace_back(dst->ele_size == 4 ? Op::Cdq : Op::Cqo);
+            load_operand(beg, 'a', dst_size);
+            res.first.emplace_back(dst_size == 4 ? Op::Cdq : Op::Cqo);
 
             std::string rhs;
             if (is_num(end))
             {
-                res.first.emplace_back(Op::Mov, get_register('c', dst), end);
-                rhs = get_register('c', dst);
+                res.first.emplace_back(Op::Mov, get_register('c', dst_size), end);
+                rhs = get_register('c', dst_size);
             }
             else
-                rhs = alu_operand(end, dst->ele_size);
+                rhs = alu_operand(end, dst_size);
 
             res.first.emplace_back(Op::Idiv, rhs);
             if (sign == "%")
-                res.first.emplace_back(Op::Mov, get_register('a', dst), get_register('d', dst));
+                res.first.emplace_back(Op::Mov, get_register('a', dst_size), get_register('d', dst_size));
 
             store_from_a();
         }
         else if (sign == "<<" || sign == ">>")
         {
-            load_operand(beg, 'a', dst->ele_size);
+            load_operand(beg, 'a', dst_size);
             if (is_num(end))
-                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst), end);
+                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst_size), end);
             else
             {
                 load_operand(end, 'c', operand_size(end, 4));
-                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst), "cl");
+                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst_size), "cl");
             }
             store_from_a();
         }
@@ -747,18 +912,34 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
         else
             res.first.emplace_back(Op::Mov, "eax", get_adres(require_mem(node->arg[0])));
     }
+    else if (node->name == "wywolaj")
+    {
+        res.first.emplace_back(Op::Call, node->arg[0]);
+    }
     else if (node->name == "enter_point")
     {
-        res.first.emplace_back(Op::Directive, ".intel_syntax noprefix");
-        res.first.emplace_back(Op::Directive, ".global main");
-        res.first.emplace_back(Op::Label, "main");
+        std::string lab;
+        if (node->arg.size() > 1)
+            lab = node->arg[1];
+        else
+            lab = node->arg[0];
 
-        res.first.emplace_back(Op::Push, "rbp");
-        res.first.emplace_back(Op::Mov, "rbp", "rsp");
-        res.first.emplace_back(Op::Sub, "rsp", std::to_string(stack.size()));
+        res.first.emplace_back(Op::Label, lab);
 
-        res.second.emplace_back(Op::Add, "rsp", std::to_string(stack.size()));
-        res.second.emplace_back(Op::Pop, "rbp");
+        if (stack.size() > 1)
+        {
+            int stack_size = stack.size();
+            stack_size >>= 4;
+            stack_size += 1;
+            stack_size <<= 4;
+            
+            res.first.emplace_back(Op::Push, "rbp");
+            res.first.emplace_back(Op::Mov, "rbp", "rsp");
+            res.first.emplace_back(Op::Sub, "rsp", std::to_string(stack_size));
+
+            res.second.emplace_back(Op::Add, "rsp", std::to_string(stack_size));
+            res.second.emplace_back(Op::Pop, "rbp");
+        }
         res.second.emplace_back(Op::Ret);
     }
     else if (node->name != "stworz" && node->name != "usun")
@@ -913,7 +1094,10 @@ bool Generator::worth_storing(const std::string &s, const std::size_t beg) const
             continue;
 
         if (cur.op == Op::Call)
-            return true;
+        {
+            pending.push_back(i + 1);
+            continue;
+        }
         if (cur.op == Op::Ret)
             continue;
 

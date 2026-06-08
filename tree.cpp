@@ -70,6 +70,18 @@ namespace
             {"&&", "||"},
             {"||", "&&"}};
 
+    std::unordered_map<std::string, std::unordered_map<int, std::string>> type_num_to_reg = {
+        {"liczba",
+         {{0, "ecx"},
+          {1, "edx"},
+          {2, "r8d"},
+          {3, "r9d"}}},
+        {"logika",
+         {{0, "cl"},
+          {1, "dl"},
+          {2, "r8b"},
+          {3, "r9b"}}}};
+
     std::string get_var_name(const std::string s)
     {
         int id = 0;
@@ -568,6 +580,85 @@ namespace
         iterations = count;
         return true;
     }
+
+    std::vector<std::string> split_string(const std::string &s)
+    {
+        std::string buf = "";
+        std::vector<std::string> res;
+        int depth = 0;
+        for (char c : s)
+        {
+            if (c == '(')
+                depth++;
+            else if (c == ')')
+                depth--;
+
+            if (c == ',' && depth == 0)
+            {
+                if (!buf.empty())
+                    res.push_back(remove_spaces(buf));
+                buf = "";
+            }
+            else
+                buf += c;
+        }
+
+        if (!buf.empty())
+            res.push_back(remove_spaces(buf));
+        return res;
+    }
+
+    bool parse_function_call(const std::string &expr, const std::unordered_map<std::string, std::string> &fun_type, std::string &name, std::vector<std::string> &args)
+    {
+        std::string s = remove_spaces(expr);
+        std::size_t open = s.find('(');
+        if (open == std::string::npos || open == 0 || s.empty() || s.back() != ')')
+            return false;
+
+        name = s.substr(0, open);
+        if (!fun_type.count(name))
+            return false;
+
+        int depth = 0;
+        for (std::size_t i = open; i < s.size(); i++)
+        {
+            if (s[i] == '(')
+                depth++;
+            else if (s[i] == ')')
+                depth--;
+
+            if (depth == 0 && i + 1 < s.size())
+                return false;
+            if (depth < 0)
+                return false;
+        }
+        if (depth != 0)
+            return false;
+
+        std::string raw_args = s.substr(open + 1, s.size() - open - 2);
+        args = split_string(raw_args);
+        return true;
+    }
+
+    bool contains_function_call(const std::string &expr, const std::unordered_map<std::string, std::string> &fun_type)
+    {
+        std::string s = remove_spaces(expr);
+        for (std::size_t i = 0; i < s.size(); i++)
+        {
+            if (!is_ident_char(s[i]))
+                continue;
+
+            std::size_t begin = i;
+            while (i < s.size() && is_ident_char(s[i]))
+                i++;
+
+            std::string name = s.substr(begin, i - begin);
+            if (fun_type.count(name) && i < s.size() && s[i] == '(')
+                return true;
+        }
+
+        return false;
+    }
 }
 
 Tree::Node::Node(std::string name, Node *parent) : name(name), parent(parent) {}
@@ -618,7 +709,9 @@ void Tree::append(const Token &tok)
 
     if (tok.name == "begin")
     {
-        if (cur->child.empty())
+        if (cur->name == "enter_point" && cur->child.empty())
+            return;
+        else if (cur->child.empty())
             std::__throw_logic_error("Nie ma do czego wejść");
         Node *next = cur->child.back();
         cur = next;
@@ -627,7 +720,9 @@ void Tree::append(const Token &tok)
 
     if (tok.name == "end")
     {
-        if (cur->parent == nullptr)
+        if (cur->name == "enter_point")
+            return;
+        else if (cur->parent == nullptr)
             std::__throw_logic_error("Nie ma z czego wyjść");
         Node *next = cur->parent;
         cur = next;
@@ -644,6 +739,41 @@ void Tree::append(const Token &tok)
 
 int Tree::node_traversal(Node *cur)
 {
+    if (cur->name == "enter_point")
+    {
+        std::vector<std::string> new_args;
+        std::vector<Node *> prefix;
+
+        new_args.push_back(cur->arg[0]);
+        new_args.push_back(cur->arg[1]);
+
+        for (int i = 2; i + 1 < cur->arg.size(); i += 2)
+        {
+            int arg_num = i / 2 - 1;
+            const std::string &type = cur->arg[i];
+            const std::string &name = cur->arg[i + 1];
+            if (!type_num_to_reg.count(type) || !type_num_to_reg[type].count(arg_num))
+                throw std::runtime_error("Nieobslugiwany argument funkcji: " + name);
+
+            Node *cre = new Node("stworz", cur);
+            cre->arg.push_back(type);
+            cre->arg.push_back(name);
+
+            Node *set = new Node("ustaw", cur);
+            set->arg.push_back(name);
+
+            var_names.insert(name);
+
+            std::string reg = type_num_to_reg[type][arg_num];
+            set->arg.push_back(reg);
+
+            prefix.push_back(cre);
+            prefix.push_back(set);
+        }
+
+        cur->child.insert(cur->child.begin(), prefix.begin(), prefix.end());
+        cur->arg = new_args;
+    }
 
     if (cur->name == "dopoki")
     {
@@ -792,6 +922,34 @@ int Tree::node_traversal(Node *cur)
         return 0;
     }
 
+    if (cur->name == "zakoncz" && (!var_names.count(cur->arg[0]) && !is_num(cur->arg[0])))
+    {
+        Node *par = cur->parent;
+        Node *god = par;
+        while (god->parent != nullptr)
+            god = god->parent;
+
+        std::size_t idx = 0;
+        auto &v = par->child;
+        while (v[idx] != cur)
+            idx++;
+
+        std::string temp_name = get_var_name("zakoncz");
+        Node *cre = new Node("stworz", par);
+
+        cre->arg.push_back(god->arg[0]);
+        cre->arg.push_back(temp_name);
+
+        Node *set = new Node("ustaw", par);
+        set->arg.push_back(temp_name);
+        set->arg.push_back(cur->arg[0]);
+
+        cur->arg[0] = temp_name;
+
+        v.insert(v.begin() + idx, set);
+        v.insert(v.begin() + idx, cre);
+    }
+
     if (cur->name == "ustaw")
     {
         Node *par = cur->parent;
@@ -807,6 +965,78 @@ int Tree::node_traversal(Node *cur)
         for (int i = 0; i < s.size(); i++)
             while (i < s.size() && s[i] == ' ')
                 s.erase(i, 1);
+
+        std::string fun_name;
+        std::vector<std::string> call_args;
+        if (parse_function_call(s, fun_type, fun_name, call_args))
+        {
+            std::vector<std::string> arg_types;
+            auto fun_it = fun_args.find(fun_name);
+            if (fun_it != fun_args.end())
+                arg_types = fun_it->second;
+
+            if (call_args.size() != arg_types.size())
+                throw std::runtime_error("Zla liczba argumentow wywolania funkcji: " + fun_name);
+
+            std::vector<Node *> prefix;
+            bool has_nested_call = false;
+            for (const std::string &arg : call_args)
+                has_nested_call |= contains_function_call(arg, fun_type);
+
+            auto append_arg_register_load = [&](std::size_t i, const std::string &expr)
+            {
+                const std::string &type = arg_types[i];
+                if (!type_num_to_reg.count(type) || !type_num_to_reg[type].count(static_cast<int>(i)))
+                    throw std::runtime_error("Nieobslugiwany argument wywolania funkcji: " + fun_name);
+
+                std::string reg = type_num_to_reg[type][static_cast<int>(i)];
+                Node *set_reg = new Node("ustaw", par);
+                set_reg->arg.push_back(reg);
+                set_reg->arg.push_back(expr);
+                prefix.push_back(set_reg);
+            };
+
+            if (has_nested_call)
+            {
+                std::vector<std::string> temp_names;
+                for (std::size_t i = 0; i < call_args.size(); i++)
+                {
+                    const std::string &type = arg_types[i];
+                    if (!type_num_to_reg.count(type) || !type_num_to_reg[type].count(static_cast<int>(i)))
+                        throw std::runtime_error("Nieobslugiwany argument wywolania funkcji: " + fun_name);
+
+                    std::string temp_name = get_var_name(type);
+                    temp_names.push_back(temp_name);
+
+                    Node *create = new Node("stworz", par);
+                    create->arg.push_back(type);
+                    create->arg.push_back(temp_name);
+                    prefix.push_back(create);
+
+                    Node *set_temp = new Node("ustaw", par);
+                    set_temp->arg.push_back(temp_name);
+                    set_temp->arg.push_back(call_args[i]);
+                    prefix.push_back(set_temp);
+                }
+
+                for (std::size_t i = 0; i < temp_names.size(); i++)
+                    append_arg_register_load(i, temp_names[i]);
+            }
+            else
+            {
+                for (std::size_t i = 0; i < call_args.size(); i++)
+                    append_arg_register_load(i, call_args[i]);
+            }
+
+            Node *call = new Node("wywolaj", par);
+            call->arg.push_back(fun_name);
+            prefix.push_back(call);
+
+            v.insert(v.begin() + idx, prefix.begin(), prefix.end());
+
+            cur->arg[1] = (fun_type[fun_name] == "liczba") ? "eax" : "al";
+            return 0;
+        }
 
         if (count_opperands(s) > 1)
         {
@@ -931,7 +1161,7 @@ bool Tree::constant_folding_node(Node *cur, std::unordered_map<std::string, long
         if (know.count(cur->arg[0]))
             cur->arg[0] = std::to_string(know[cur->arg[0]]);
 
-    if (cur->name == "punkt" || cur->name == "idzjezeli" || cur->name == "idz")
+    if (cur->name == "punkt" || cur->name == "idzjezeli" || cur->name == "idz" || cur->name == "wywolaj")
     {
         know.clear();
         array_know.clear();
@@ -1144,7 +1374,7 @@ bool Tree::loop_unrolling_node(Node *cur, std::unordered_map<std::string, long l
         if (child->name == "wczytaj" && !child->arg.empty())
             know.erase(child->arg[0]);
 
-        if (child->name == "punkt" || child->name == "idz" || child->name == "idzjezeli")
+        if (child->name == "punkt" || child->name == "idz" || child->name == "idzjezeli" || child->name == "wywolaj")
             know.clear();
 
         if (child->name != "dopoki")

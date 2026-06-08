@@ -68,6 +68,14 @@ namespace
                 return i;
         return -1;
     }
+
+    bool conteins(const std::string &s, char c)
+    {
+        for (const auto wc : s)
+            if (wc == c)
+                return true;
+        return false;
+    }
 }
 
 std::istringstream mask(std::istream &input)
@@ -99,10 +107,43 @@ std::istringstream mask(std::istream &input)
 
         bool did_anyting = 0;
 
+        if (content[0] == "poczontek")
+        {
+            did_anyting = 1;
+            out << "funkcja liczba main\n";
+        }
+
         if (dec(content[0]))
         {
             did_anyting = 1;
-            if (!types.count(content[0]))
+            if (conteins(content[1], '(') || (content.size() > 2 && arrow(content) == -1))
+            {
+                std::vector<std::string> arg;
+                std::string buf;
+                for (const auto &word : content)
+                {
+                    for (const auto c : word)
+                    {
+                        if (c == '(' || c == ')' || c == ',' || c == ' ')
+                        {
+                            if (!buf.empty())
+                                arg.push_back(buf);
+                            buf = "";
+                        }
+                        else
+                            buf += c;
+                    }
+                    if (!buf.empty())
+                        arg.push_back(buf);
+                    buf = "";
+                }
+
+                out << "funkcja ";
+                for (const auto &word : arg)
+                    out << word << " ";
+                out << "\n";
+            }
+            else if (conteins(content[0], '['))
             {
                 std::string a = "", b = "";
                 bool is = 0;

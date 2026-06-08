@@ -1,3 +1,4 @@
+poczontek{
 liczba a <- 3
 liczba b <- 7
 
@@ -14,3 +15,4 @@ dopoki b > 0
 }
 
 zakoncz a
+}

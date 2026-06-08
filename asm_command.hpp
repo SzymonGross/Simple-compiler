@@ -40,13 +40,11 @@ enum class Op
     Call,
     Test,
     Xor,
-    Je, 
+    Je,
     Jl,
     Jg,
     Jge
 };
-
-
 
 struct AsmCommand
 {
@@ -63,8 +61,7 @@ struct AsmCommand
 
 class Generator
 {
-    std::size_t ofs = 0;
-    std::size_t max_ofs = 32;
+    std::vector<bool> stack = {1};
     std::unordered_map<std::string, Varbile *> mem;
 
 public:

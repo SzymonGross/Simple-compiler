@@ -3,8 +3,8 @@
 main:
     push rbp
     mov rbp, rsp
-    sub rsp, 60
-    mov eax, 13
-    add rsp, 60
+    sub rsp, 32
+    mov eax, 8
+    add rsp, 32
     pop rbp
     ret

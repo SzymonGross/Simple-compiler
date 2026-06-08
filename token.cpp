@@ -20,11 +20,13 @@ namespace
         {"idz", 1},
         {"wczytaj", 3},
         {"zapisz", 3},
+        {"funkcja", 2},
         {"zakoncz", 1}};
 
     const std::unordered_set<std::string> logi = {"dopoki", "jezeli", "albojezeli"};
-    const std::unordered_set<std::string> arit = {"ustaw"};
+    const std::unordered_set<std::string> arit = {"ustaw", "zakoncz"};
     const std::unordered_set<std::string> it_depends = {"stworz"};
+    const std::unordered_set<std::string> value_types = {"liczba", "logika"};
 
     const std::unordered_map<std::string, int> type_arg = {{"liczba", 1}, {"logika", 1}, {"tablica", 3}};
 
@@ -66,6 +68,22 @@ Token::Token(const std::string &s)
         int expectedArgs = it->second;
         int actualArgs = static_cast<int>(v.size()) - 1;
 
+        if (name == "funkcja")
+        {
+            if (actualArgs < 2)
+                throw std::runtime_error("Zla liczba argumentow funkcji");
+            if ((actualArgs - 2) % 2 != 0)
+                throw std::runtime_error("Niepelna para typu i nazwy argumentu funkcji: " + v[2]);
+            if ((actualArgs - 2) / 2 > 4)
+                throw std::runtime_error("Za duzo argumentow w funkcji: " + v[2]);
+            if (!value_types.count(v[1]))
+                throw std::runtime_error("Nie istniejacy typ zwracany funkcji: " + v[1]);
+            for (std::size_t i = 3; i < v.size(); i += 2)
+                if (!value_types.count(v[i]))
+                    throw std::runtime_error("Nie istniejacy typ argumentu funkcji: " + v[i]);
+            actualArgs = expectedArgs;
+        }
+
         if (logi.count(name))
         {
             actualArgs = expectedArgs;
@@ -80,13 +98,27 @@ Token::Token(const std::string &s)
         if (arit.count(name))
         {
             actualArgs = expectedArgs;
-            arg.push_back(v[1]);
-            arg.emplace_back();
-            for (std::size_t i = 2; i < v.size(); i++)
+            std::size_t expr_begin = 2;
+            if (name == "zakoncz")
             {
-                arg[1] += v[i] + ' ';
+                arg.emplace_back();
+                expr_begin = 1;
             }
-            arg[1].pop_back();
+            else
+            {
+                arg.push_back(v[1]);
+                arg.emplace_back();
+            }
+
+            if (v.size() <= expr_begin)
+                throw std::runtime_error("Brak wyrazenia: " + name);
+
+            for (std::size_t i = expr_begin; i < v.size(); i++)
+            {
+                if (!arg.back().empty())
+                    arg.back() += ' ';
+                arg.back() += v[i];
+            }
         }
 
         if (it_depends.count(name))
