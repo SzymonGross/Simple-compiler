@@ -1,208 +1,292 @@
-# Simple Compiler
+# Simple compiler
 
-This project is a refactored implementation of a simple compiler written in C++.
+A simple compiler written in C++17. It translates a small Polish-inspired
+source language from `.pl` files into x86-64 assembly using Intel syntax
+(`.intel_syntax noprefix`).
 
-The compiler translates a small Polish-inspired language into assembly-like
-instructions. It supports variables, arithmetic expressions, logical
-expressions, conditional blocks, loops, labels, jumps, and simple arrays.
+The current version supports variables, arrays, arithmetic and logical
+expressions, conditionals, loops, functions, recursion, and several tree-level
+and assembly-level optimizations.
 
-The main goal of this version was to clean up the project structure, separate
-responsibilities between components, and make higher-level control flow compile
-down to lower-level jump instructions.
-
-# Project Structure
+## Project Structure
 
 ```text
 .
-├── main.cpp                            # Program entry point
-├── token.hpp / token.cpp               # Command-line and token parsing
+├── main.cpp
+├── compiler.hpp / compiler.cpp         # Main compilation pipeline
+├── mask.hpp / mask.cpp                 # Converts convenient .pl syntax into tokens
+├── token.hpp / token.cpp               # Token parsing
+├── tree.hpp / tree.cpp                 # Program tree and high-level optimizations
+├── asm_command.hpp / asm_command.cpp   # Assembly generation and peephole optimization
 ├── varible.hpp / varible.cpp           # Variable model
-├── tree.hpp / tree.cpp                 # Syntax tree and transformations
-├── asm_command.hpp / asm_command.cpp   # Representation and generation of ASM instructions
-├── compiler.hpp / compiler.cpp         # Main compiler logic
 ├── kody_pl/                            # Example source programs
-├── kody_s/                             # Example generated assembly output
-└── CMakeLists.txt                      # Build configuration
+├── kody_s/                             # Generated assembly output
+└── CMakeLists.txt
 ```
 
-# Building
+## Building
 
 ```bash
 cmake -S . -B build
-cmake --build build
+cmake --build build --target komp
 ```
 
-# Usage
+## Usage
 
 ```bash
-./build/komp <input_file> <output_file>
+./build/komp <input_file.pl> <output_file.s>
 ```
 
 Example:
 
 ```bash
-./build/komp kody_pl/p1.pl kody_s/p1.s
+./build/komp kody_pl/p5.pl kody_s/p5.s
 ```
 
-# Commands
+The generated assembly can be assembled with GCC:
 
-The toy language uses Polish-inspired commands.
+```bash
+gcc kody_s/p5.s -o p5
+./p5
+```
+
+## Language Syntax
+
+The program entry point should be written as a `poczontek` block. Functions can
+be defined before `poczontek`.
 
 ```text
-stworz <type> <name>
-    Create a variable with the given type and name.
-
-stworz tablica <type> <size> <name>
-    Create an array with the given element type, size, and name.
-
-    Supported types:
-    - liczba    integer
-    - logika    boolean/logical value
-
-ustaw <name> <expression>
-    Assign the value of <expression> to the variable or array element.
-
-jezeli <expression>
-begin
-    Execute the following block only if <expression> is true.
-end
-
-dopoki <expression>
-begin
-    Repeat the following block while <expression> is true.
-end
-
-punkt <name>
-    Define a label with the given name.
-
-idz <name>
-    Jump to the label with the given name.
-
-zakoncz <expression>
-    Exit the program with the value of <expression>.
+poczontek {
+    liczba x <- 7
+    zakoncz x
+}
 ```
 
-Expressions can use arithmetic, comparisons, logic, and array indexing:
+### Types
+
+```text
+liczba      # 32-bit integer
+logika      # boolean value, stored as one byte
+```
+
+### Variables and Assignments
+
+```text
+liczba a
+liczba b <- 12
+logika ok <- a < b
+
+a <- b + 3
+a <-+ 1      # shorthand for: a <- a + 1
+a <-/ 10     # shorthand for: a <- a / 10
+```
+
+Internally, these instructions are lowered into `stworz` and `ustaw` tokens.
+
+### Arrays
+
+```text
+liczba[15] tab
+tab[0] <- 1
+tab[i+2] <- tab[i] + tab[i+1]
+```
+
+Array accesses are lowered into internal `wczytaj` and `zapisz` operations.
+
+### Conditionals
+
+```text
+jezeli a < b {
+    a <- b
+}
+albojezeli a == b {
+    a <- 0
+}
+albo {
+    a <- a - b
+}
+```
+
+### Loops
+
+```text
+dopoki n > 0 {
+    suma <-+ n % 10
+    n <-/ 10
+}
+```
+
+### Functions
+
+A function has the following form:
+
+```text
+<return_type> <name> (<arg_type_1> <arg_name_1>, ...)
+{
+    zakoncz <expression>
+}
+```
+
+Up to 4 arguments are supported. Function arguments are passed through `ecx`,
+`edx`, `r8d`, `r9d` for `liczba`, and `cl`, `dl`, `r8b`, `r9b` for `logika`.
+
+Recursive example:
+
+```text
+liczba fun (liczba m, liczba n)
+{
+    jezeli m == 0 {
+        zakoncz n + 1
+    }
+    albojezeli n == 0 {
+        zakoncz fun(m-1, 1)
+    }
+    albo {
+        zakoncz fun(m-1, fun(m,n-1))
+    }
+}
+
+poczontek {
+    zakoncz fun(3,3)
+}
+```
+
+Function calls are lowered in `tree.cpp` into:
+
+```text
+ustaw <argument_register> <expression>
+wywolaj <function_name>
+ustaw <target> eax/al
+```
+
+For nested function calls, the compiler first materializes arguments into
+temporary variables so that a `call` cannot overwrite already prepared argument
+registers.
+
+### Expressions
+
+Supported operators:
 
 ```text
 +  -  *  /  %  <<  >>
 ==  !=  <  <=  >  >=
 &&  ||  !
-tab[index]
 ```
 
-# Example Codes
-
-## p1.pl - Greatest common divisor
-
-This program computes the greatest common divisor of 15 and 12 using repeated
-subtraction.
+Expressions can use parentheses, variables, constants, arrays, and function
+calls:
 
 ```text
-stworz liczba a
-ustaw a 15
-
-stworz liczba b
-ustaw b 12
-
-dopoki a!=b
-begin
-    jezeli a<b
-    begin
-        stworz liczba c
-        ustaw c a
-        ustaw a b
-        ustaw b c
-    end
-
-    ustaw a a - b
-end
-
-zakoncz a
+wynik <- (a + b) * 3
+ok <- a < b || b == 5
+x <- fun(a-1, tab[i])
 ```
 
-Expected result:
+### Returning / Exiting
 
 ```text
-exit code: 3
+zakoncz <expression>
 ```
 
-## p2.pl - Loop with logical condition
+Inside a function, this sets the return value. Inside `poczontek`, it sets the
+program exit code.
 
-This program uses multiplication, a `dopoki` loop, comparison operators, and a
-logical `||` condition.
+## Examples
 
-```text
-stworz liczba a
-ustaw a 3
-
-stworz liczba b
-ustaw b 7
-
-stworz liczba c
-ustaw c a*b
-
-dopoki b > 0
-begin
-    ustaw b b-1
-
-    jezeli a > b || b == 5
-    begin
-        ustaw a a+1
-    end
-end
-
-zakoncz a
-```
-
-Expected result:
+### Fibonacci With an Array
 
 ```text
-exit code: 8
-```
+poczontek{
+liczba[15] tab
+tab[0] <- 1
+tab[1] <- 1
 
-## p3.pl - Fibonacci numbers with an array
+liczba i <- 0
 
-This program stores Fibonacci numbers in an array and exits with `tab[6]`.
-
-```text
-stworz tablica liczba 15 tab
-ustaw tab[0] 1
-ustaw tab[1] 1
-
-stworz liczba i
-ustaw i 0
-
-dopoki i < 5
-begin
-    ustaw tab[i+2] tab[i] + tab[i+1]
-    ustaw i i+1
-end
+dopoki i < 5 {
+    tab[i+2] <- tab[i] + tab[i+1]
+    i <- i+1
+}
 
 zakoncz tab[6]
+}
 ```
 
-Expected result:
+Expected exit code: `13`.
+
+### Digit Sum and Conditionals
 
 ```text
-exit code: 13
+poczontek{
+liczba n <- 98765
+liczba suma <- 0
+liczba cyfra <- 0
+
+dopoki n > 0 {
+    cyfra <- n%10
+    suma <-+ cyfra
+    n <-/ 10
+}
+
+liczba wynik <- 0
+
+jezeli suma < 10 {
+    wynik <- 1
+}
+albojezeli suma < 25 {
+    wynik <- 2
+}
+albojezeli suma < 40 {
+    wynik <- 3
+}
+albo {
+    wynik <- 4
+}
+
+zakoncz wynik
+}
 ```
 
-# What I Learned
+Expected exit code: `3`.
 
-This project helped me understand how higher-level control-flow constructs can
-be translated into lower-level jump instructions.
+### Recursion
 
-The most interesting part was handling nested blocks correctly: each `end` has
-to match the nearest currently open `begin`, which requires keeping track of
-block structure during compilation.
+`kody_pl/p5.pl` computes `fun(3,3)` and should exit with code `61`.
 
-I also learned how expression parsing, temporary variables, arrays, and simple
-optimizations affect the generated assembly.
+## Optimizations
 
-# Technologies
+`tree.cpp` performs optimizations and lowering passes such as:
 
-- C++
-- CMake
-- Compiler design basics
-- Control-flow compilation
+- constant folding,
+- identity simplification,
+- dead branch removal,
+- simple loop unrolling,
+- assignment combining,
+- array access lowering,
+- dead variable release,
+- function call lowering into register setup and `wywolaj`.
+
+`asm_command.cpp` performs peephole optimization, including dead store removal,
+known register value folding, and collapsing sequences such as:
+
+```asm
+cmp dword ptr [rbp-8], 0
+setne al
+mov byte ptr [rbp-9], al
+test al, al
+jne endif_1
+```
+
+into:
+
+```asm
+cmp dword ptr [rbp-8], 0
+jne endif_1
+```
+
+## Notes
+
+- `kody_pl/p1.pl` is an older example without a `poczontek` block.
+- Current examples using the newer syntax are mainly `p2.pl`, `p3.pl`, `p4.pl`,
+  and `p5.pl`.
+- The `varible` filename is historical and has been kept as-is.
