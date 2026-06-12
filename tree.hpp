@@ -39,8 +39,8 @@ private:
     bool array_access_lowering_node(Node *cur, const std::unordered_map<std::string, std::string> &array_types);
     void collect_variable_lifetimes_node(Node *cur, std::unordered_map<std::string, std::vector<std::string>> &type_by_name, std::unordered_map<std::string, Node *> &create_by_name, std::unordered_map<std::string, Node *> &last_use);
     void release_dead_variables_node();
-    void varible_counter_node(Node *cur, std::unordered_map<std::string, int> &total_usage);
-    bool varible_cleaner_node(Node *cur, std::unordered_map<std::string, int> &total_usage);
+    void varible_counter_node(Node *cur, std::unordered_map<std::string, int> &total_usage, std::unordered_map<std::string, int> &total_edits);
+    bool varible_cleaner_node(Node *cur, std::unordered_map<std::string, int> &total_usage, std::unordered_map<std::string, int> &total_edits);
     bool neg_simplification_node(Node *cur, std::unordered_map<std::string, Node *> &last_use);
 
 public:

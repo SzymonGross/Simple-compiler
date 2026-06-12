@@ -4,8 +4,10 @@
 
 enum class Typ
 {
+    adres,
     liczba,
     logika,
+    tablica_adres,
     tablica_liczba,
     tablica_logika
 };

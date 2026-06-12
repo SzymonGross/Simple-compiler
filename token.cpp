@@ -18,17 +18,19 @@ namespace
         {"albo", 0},
         {"punkt", 1},
         {"idz", 1},
-        {"wczytaj", 3},
+        {"wczytaj", 1},
+        {"wypisz", 1},
         {"zapisz", 3},
         {"funkcja", 2},
         {"zakoncz", 1}};
 
     const std::unordered_set<std::string> logi = {"dopoki", "jezeli", "albojezeli"};
     const std::unordered_set<std::string> arit = {"ustaw", "zakoncz"};
+    const std::unordered_set<std::string> text = {"wypisz", "wczytaj"};
     const std::unordered_set<std::string> it_depends = {"stworz"};
-    const std::unordered_set<std::string> value_types = {"liczba", "logika"};
+    const std::unordered_set<std::string> value_types = {"liczba", "logika", "adres"};
 
-    const std::unordered_map<std::string, int> type_arg = {{"liczba", 1}, {"logika", 1}, {"tablica", 3}};
+    const std::unordered_map<std::string, int> type_arg = {{"liczba", 1}, {"logika", 1}, {"adres", 1}, {"tablica", 3}};
 
     std::vector<std::string> split(const std::string &text)
     {
@@ -138,10 +140,21 @@ Token::Token(const std::string &s)
                 throw std::runtime_error("Nie istniejący typ: " + v[1]);
         }
 
+        if (text.count(name))
+        {
+            actualArgs = expectedArgs;
+
+            arg.emplace_back();
+
+            for (std::size_t i = 1; i < v.size(); i++)
+                arg[0] += v[i] + ' ';
+            arg[0].pop_back();
+        }
+
         if (actualArgs != expectedArgs)
             throw std::runtime_error("Zla liczba arugmentow: " + name);
 
-        if (!logi.count(name) && !arit.count(name) && !it_depends.count(name))
+        if (!logi.count(name) && !arit.count(name) && !it_depends.count(name) && !text.count(name))
             for (std::size_t i = 1; i < v.size(); i++)
             {
                 arg.push_back(v[i]);

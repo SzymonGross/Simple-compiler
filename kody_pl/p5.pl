@@ -16,5 +16,12 @@ liczba fun (liczba m, liczba n)
 
 poczontek
 {
-    zakoncz fun(3,3)
+    liczba n, m
+
+    wczytaj n, m
+
+    liczba x <- fun(n,m)
+    wypisz "%x\n"
+
+    zakoncz 0
 }

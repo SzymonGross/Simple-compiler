@@ -8,7 +8,7 @@
 
 namespace
 {
-    const std::unordered_set<std::string> types = {"logika", "liczba"};
+    const std::unordered_set<std::string> types = {"logika", "liczba", "adres"};
 
     const std::unordered_set<std::string> operands = {"+", "-", "*", "/", "%", "<<", ">>", "&&", "||", "==", "!=", "<=", ">=", "<", ">", "!"};
 
@@ -76,6 +76,49 @@ namespace
                 return true;
         return false;
     }
+
+    bool has_char_before(const std::vector<std::string> &vs, char c, int end)
+    {
+        if (end == -1)
+            end = static_cast<int>(vs.size());
+
+        for (int i = 1; i < end; i++)
+            if (conteins(vs[i], c))
+                return true;
+        return false;
+    }
+
+    std::vector<std::string> declaration_names(const std::vector<std::string> &vs, int end)
+    {
+        if (end == -1)
+            end = static_cast<int>(vs.size());
+
+        std::vector<std::string> names;
+        std::string buf;
+
+        for (int i = 1; i < end; i++)
+        {
+            for (char c : vs[i])
+            {
+                if (c == ',')
+                {
+                    if (!buf.empty())
+                        names.push_back(buf);
+                    buf = "";
+                }
+                else
+                    buf += c;
+            }
+
+            if (!buf.empty())
+            {
+                names.push_back(buf);
+                buf = "";
+            }
+        }
+
+        return names;
+    }
 }
 
 std::istringstream mask(std::istream &input)
@@ -116,7 +159,24 @@ std::istringstream mask(std::istream &input)
         if (dec(content[0]))
         {
             did_anyting = 1;
-            if (conteins(content[1], '(') || (content.size() > 2 && arrow(content) == -1))
+            int arrow_idx = arrow(content);
+            if (conteins(content[0], '['))
+            {
+                std::string a = "", b = "";
+                bool is = 0;
+                for (char c : content[0])
+                {
+                    if (c == '[' || c == ']')
+                        is = 1;
+                    else if (is)
+                        b += c;
+                    else
+                        a += c;
+                }
+
+                out << "stworz tablica " << a << " " << b << " " << content[1] << "\n";
+            }
+            else if (has_char_before(content, '(', arrow_idx))
             {
                 std::vector<std::string> arg;
                 std::string buf;
@@ -143,25 +203,10 @@ std::istringstream mask(std::istream &input)
                     out << word << " ";
                 out << "\n";
             }
-            else if (conteins(content[0], '['))
-            {
-                std::string a = "", b = "";
-                bool is = 0;
-                for (char c : content[0])
-                {
-                    if (c == '[' || c == ']')
-                        is = 1;
-                    else if (is)
-                        b += c;
-                    else
-                        a += c;
-                }
-
-                out << "stworz tablica " << a << " " << b << " " << content[1] << "\n";
-            }
             else
             {
-                out << "stworz " << content[0] << " " << content[1] << "\n";
+                for (const std::string &name : declaration_names(content, arrow_idx))
+                    out << "stworz " << content[0] << " " << name << "\n";
             }
         }
 

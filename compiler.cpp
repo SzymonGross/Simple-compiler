@@ -20,6 +20,9 @@ Compiler::Compiler(std::istream &input)
 
     std::istringstream temp = mask(input);
 
+    bool contains_printf = false;
+    bool contains_scanf = false;
+
     std::string line;
     while (std::getline(temp, line))
     {
@@ -76,10 +79,22 @@ Compiler::Compiler(std::istream &input)
             changed = 0;
             changed |= gen.Piphole_opt();
         }
+        gen.compact_stack_offsets();
+
+        contains_printf |= gen.contains_printf;
+        contains_scanf |= gen.contains_scanf;
+
+        for (const auto &a : gen.data)
+            data.push_back(a);
 
         for (const auto &a : gen.body)
             code.push_back(a);
     }
+
+    if (contains_printf)
+        import.emplace_back(Op::Directive, ".extern printf");
+    if (contains_scanf)
+        import.emplace_back(Op::Directive, ".extern scanf");
 }
 
 void Compiler::write(std::ostream &output) const
@@ -91,6 +106,11 @@ void Compiler::write(std::ostream &output) const
         else
             output << a.emit() << "\n";
     }
+
+    output << "\n";
+    if (!data.empty())
+        output << ".section .data\n";
+
     for (const AsmCommand &a : data)
     {
         if (a.op != Op::Directive && a.op != Op::Label)
@@ -98,6 +118,10 @@ void Compiler::write(std::ostream &output) const
         else
             output << a.emit() << "\n";
     }
+
+    if (!data.empty())
+        output << "\n";
+
     for (const AsmCommand &a : code)
     {
         if (a.op != Op::Directive && a.op != Op::Label)

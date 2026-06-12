@@ -1,3 +1,5 @@
+poczontek
+{
 liczba a <- 15
 
 liczba b <- 12
@@ -14,3 +16,4 @@ dopoki a != b {
 }
 
 zakoncz a
+}

@@ -5,7 +5,7 @@
 main:
     push rbp
     mov rbp, rsp
-    sub rsp, 32
+    sub rsp, 48
     mov dword ptr [rbp-4], 98765
     mov dword ptr [rbp-8], 0
 loop_0:
@@ -51,6 +51,7 @@ endif_3:
     mov dword ptr [rbp-4], 4
 blockend_0:
     mov eax, dword ptr [rbp-4]
-    add rsp, 32
+    add rsp, 48
     pop rbp
     ret
+

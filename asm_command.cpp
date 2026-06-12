@@ -4,6 +4,8 @@
 #include <iostream>
 #include <unordered_set>
 #include <vector>
+#include <algorithm>
+#include <tuple>
 
 namespace
 {
@@ -80,7 +82,25 @@ namespace
         {Op::Setge, Op::Jge},
     };
 
-    std::unordered_map<std::string, std::size_t> typ_to_size = {{"liczba", 4}, {"logika", 1}};
+    std::unordered_map<std::string, std::size_t> typ_to_size = {{"logika", 1}, {"liczba", 4}, {"adres", 8}};
+
+    std::unordered_set<std::string> data_names;
+    std::size_t data_index = 1;
+
+    std::string get_data_name(std::string fun_name)
+    {
+        std::string name = fun_name + "_text_" +  std::to_string(data_index);
+
+        while (data_names.count(name))
+        {
+            data_index++;
+            name = "text_" + fun_name + std::to_string(data_index);
+        }
+
+        data_names.insert(name);
+
+        return name;
+    }
 
     bool is_num(const std::string &s)
     {
@@ -237,6 +257,22 @@ namespace
                 return 4;
         }
 
+        const std::vector<std::tuple<std::string, std::string, std::string, std::string>> named = {
+            {"rsi", "esi", "si", "sil"},
+            {"rdi", "edi", "di", "dil"},
+        };
+        for (const auto &[r64, r32, r16, r8] : named)
+        {
+            if (s == r64)
+                return 8;
+            if (s == r32)
+                return 4;
+            if (s == r16)
+                return 2;
+            if (s == r8)
+                return 1;
+        }
+
         return 0;
     }
 
@@ -266,6 +302,23 @@ namespace
                     return base;
             }
         }
+
+        const std::vector<std::tuple<std::string, std::string, std::string, std::string>> named = {
+            {"rsi", "esi", "si", "sil"},
+            {"rdi", "edi", "di", "dil"},
+        };
+        for (const auto &[r64, r32, r16, r8] : named)
+            if (s == r64 || s == r32 || s == r16 || s == r8)
+            {
+                if (size == 1)
+                    return r8;
+                if (size == 2)
+                    return r16;
+                if (size == 4)
+                    return r32;
+                if (size == 8)
+                    return r64;
+            }
 
         return s;
     }
@@ -433,6 +486,62 @@ namespace
         else
             out.emplace_back(Op::Movzx, "ecx", get_adres(idx));
     }
+
+    void load_printf_arg(std::vector<AsmCommand> &out, const std::string &target, const std::string &value, Varbile *var)
+    {
+        if (is_num(value))
+        {
+            out.emplace_back(Op::Mov, target, value);
+            return;
+        }
+
+        if (var->ele_size == 8)
+            out.emplace_back(Op::Mov, target, get_adres(var));
+        else if (var->ele_size == 4)
+            out.emplace_back(Op::Mov, resize_register(target, 4), get_adres(var));
+        else
+            out.emplace_back(Op::Movzx, resize_register(target, 4), get_adres(var));
+    }
+
+    struct StackSlot
+    {
+        int old_end = 0;
+        int size = 0;
+        int new_end = 0;
+    };
+
+    bool stack_offset_span(const std::string &operand, std::size_t &num_begin, std::size_t &num_len, int &offset)
+    {
+        if (!is_static_stack_memory(operand))
+            return false;
+
+        std::size_t rbp = operand.find("[rbp-");
+        if (rbp == std::string::npos)
+            return false;
+
+        num_begin = rbp + 5;
+        std::size_t pos = num_begin;
+        while (pos < operand.size() && operand[pos] >= '0' && operand[pos] <= '9')
+            pos++;
+
+        if (pos == num_begin || pos >= operand.size() || operand[pos] != ']')
+            return false;
+
+        num_len = pos - num_begin;
+        offset = std::stoi(operand.substr(num_begin, num_len));
+        return true;
+    }
+
+    bool stack_offset_value(const std::string &operand, int &offset)
+    {
+        std::size_t num_begin = 0, num_len = 0;
+        return stack_offset_span(operand, num_begin, num_len, offset);
+    }
+
+    int align_stack_size(int used_size)
+    {
+        return (used_size + 32 + 15) / 16 * 16;
+    }
 }
 
 std::string AsmCommand::emit() const
@@ -509,6 +618,8 @@ std::string AsmCommand::emit() const
         return "call " + a + "\n";
     case Op::Test:
         return "test " + a + ", " + b;
+    case Op::Asciz:
+        return ".asciz " + a;
     }
 
     return {};
@@ -551,6 +662,13 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
             return fallback;
         };
 
+        auto operation_size = [&](const std::string &left, const std::string &right)
+        {
+            std::size_t left_size = operand_size(left, dst_size);
+            std::size_t right_size = operand_size(right, dst_size);
+            return std::max(dst_size, std::max(left_size, right_size));
+        };
+
         auto load_operand = [&](const std::string &operand, char reg, std::size_t size)
         {
             if (is_num(operand))
@@ -589,7 +707,12 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
             if (src->ele_size == size)
                 res.first.emplace_back(Op::Mov, get_register(reg, size), get_adres(src));
             else if (src->ele_size < size)
-                res.first.emplace_back(Op::Movzx, get_register(reg, size), get_adres(src));
+            {
+                if (src->ele_size == 4 && size == 8)
+                    res.first.emplace_back(Op::Mov, get_register(reg, 4), get_adres(src));
+                else
+                    res.first.emplace_back(Op::Movzx, get_register(reg, size), get_adres(src));
+            }
             else
             {
                 res.first.emplace_back(Op::Mov, get_register(reg, src), get_adres(src));
@@ -633,7 +756,12 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
             if (src->ele_size == size)
                 res.first.emplace_back(Op::Mov, dst_reg, get_adres(src));
             else if (src->ele_size < size)
-                res.first.emplace_back(Op::Movzx, dst_reg, get_adres(src));
+            {
+                if (src->ele_size == 4 && size == 8)
+                    res.first.emplace_back(Op::Mov, resize_register(target, 4), get_adres(src));
+                else
+                    res.first.emplace_back(Op::Movzx, dst_reg, get_adres(src));
+            }
             else
                 res.first.emplace_back(Op::Mov, resize_register(target, src->ele_size), get_adres(src));
         };
@@ -745,7 +873,7 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
         }
         else if (sign == "==" || sign == "!=" || sign == "<=" || sign == ">=" || sign == "<" || sign == ">")
         {
-            std::size_t size = operand_size(beg, operand_size(end, dst_size));
+            std::size_t size = operation_size(beg, end);
             load_operand(beg, 'a', size);
             if (is_num(end))
                 res.first.emplace_back(Op::Cmp, get_register('a', size), end);
@@ -775,50 +903,53 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
         }
         else if (sign == "+" || sign == "-" || sign == "*")
         {
-            load_operand(beg, 'a', dst_size);
-            std::string rhs = alu_operand(end, dst_size);
+            std::size_t size = operation_size(beg, end);
+            load_operand(beg, 'a', size);
+            std::string rhs = alu_operand(end, size);
 
             if (sign == "+")
-                res.first.emplace_back(Op::Add, get_register('a', dst_size), rhs);
+                res.first.emplace_back(Op::Add, get_register('a', size), rhs);
             else if (sign == "-")
-                res.first.emplace_back(Op::Sub, get_register('a', dst_size), rhs);
+                res.first.emplace_back(Op::Sub, get_register('a', size), rhs);
             else
-                res.first.emplace_back(Op::Imul, get_register('a', dst_size), rhs);
+                res.first.emplace_back(Op::Imul, get_register('a', size), rhs);
 
             store_from_a();
         }
         else if (sign == "/" || sign == "%")
         {
-            if (dst_size != 4 && dst_size != 8)
+            std::size_t size = operation_size(beg, end);
+            if (size != 4 && size != 8)
                 throw std::runtime_error("Dzielenie wymaga typu liczba");
 
-            load_operand(beg, 'a', dst_size);
-            res.first.emplace_back(dst_size == 4 ? Op::Cdq : Op::Cqo);
+            load_operand(beg, 'a', size);
+            res.first.emplace_back(size == 4 ? Op::Cdq : Op::Cqo);
 
             std::string rhs;
             if (is_num(end))
             {
-                res.first.emplace_back(Op::Mov, get_register('c', dst_size), end);
-                rhs = get_register('c', dst_size);
+                res.first.emplace_back(Op::Mov, get_register('c', size), end);
+                rhs = get_register('c', size);
             }
             else
-                rhs = alu_operand(end, dst_size);
+                rhs = alu_operand(end, size);
 
             res.first.emplace_back(Op::Idiv, rhs);
             if (sign == "%")
-                res.first.emplace_back(Op::Mov, get_register('a', dst_size), get_register('d', dst_size));
+                res.first.emplace_back(Op::Mov, get_register('a', size), get_register('d', size));
 
             store_from_a();
         }
         else if (sign == "<<" || sign == ">>")
         {
-            load_operand(beg, 'a', dst_size);
+            std::size_t size = operation_size(beg, end);
+            load_operand(beg, 'a', size);
             if (is_num(end))
-                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst_size), end);
+                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', size), end);
             else
             {
                 load_operand(end, 'c', operand_size(end, 4));
-                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', dst_size), "cl");
+                res.first.emplace_back(sign == "<<" ? Op::Sal : Op::Sar, get_register('a', size), "cl");
             }
             store_from_a();
         }
@@ -864,7 +995,7 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
             res.first.emplace_back(Op::Mov, full_adres, get_register('a', mem[node->arg[1]]));
         }
     }
-    else if (node->name == "wczytaj")
+    else if (node->name == "wczytaj_ram")
     {
         Varbile *dst = mem[node->arg[0]];
         Varbile *arr = mem[node->arg[1]];
@@ -907,14 +1038,75 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
     }
     else if (node->name == "zakoncz")
     {
+        auto enclosing_return_size = [&]()
+        {
+            for (Tree::Node *cur = node; cur != nullptr; cur = cur->parent)
+                if (cur->name == "enter_point" && !cur->arg.empty() && typ_to_size.count(cur->arg[0]))
+                    return typ_to_size[cur->arg[0]];
+            return static_cast<std::size_t>(4);
+        };
+
+        std::size_t ret_size = is_num(node->arg[0]) ? enclosing_return_size() : require_mem(node->arg[0])->ele_size;
         if (is_num(node->arg[0]))
-            res.first.emplace_back(Op::Mov, "eax", node->arg[0]);
+            res.first.emplace_back(Op::Mov, get_register('a', ret_size), node->arg[0]);
         else
-            res.first.emplace_back(Op::Mov, "eax", get_adres(require_mem(node->arg[0])));
+            res.first.emplace_back(Op::Mov, get_register('a', ret_size), get_adres(require_mem(node->arg[0])));
     }
     else if (node->name == "wywolaj")
     {
         res.first.emplace_back(Op::Call, node->arg[0]);
+    }
+    else if (node->name == "wypisz")
+    {
+        contains_printf = true;
+
+        std::string data_name = get_data_name(body[0].a);
+        data.emplace_back(Op::Label, data_name);
+        data.emplace_back(Op::Asciz, node->arg[0]);
+
+        body.emplace_back(Op::Lea, "rcx", "[rip + " + data_name + "]");
+
+        auto &v = node->arg;
+
+        std::vector<std::string> reg = {"rdx", "r8", "r9"};
+
+        if (v.size() > 4)
+            throw std::runtime_error("Za dużo argumentów w wypisz");
+
+        for (std::size_t i = 1; i < v.size(); i++)
+        {
+            Varbile *var = is_num(v[i]) ? nullptr : require_mem(v[i]);
+            load_printf_arg(body, reg[i - 1], v[i], var);
+        }
+
+        body.emplace_back(Op::Xor, "eax", "eax");
+        body.emplace_back(Op::Call, "printf");
+    }
+    else if (node->name == "wczytaj")
+    {
+        contains_scanf = true;
+
+        std::string data_name = get_data_name(body[0].a);
+        data.emplace_back(Op::Label, data_name);
+        data.emplace_back(Op::Asciz, node->arg[0]);
+
+        body.emplace_back(Op::Lea, "rcx", "[rip + " + data_name + "]");
+
+        auto &v = node->arg;
+
+        std::vector<std::string> reg = {"rdx", "r8", "r9"};
+
+        if (v.size() > 4)
+            throw std::runtime_error("Za dużo argumentów w wczytaj");
+
+        for (std::size_t i = 1; i < v.size(); i++)
+        {
+            std::size_t adr = mem[v[i]]->addres;
+            body.emplace_back(Op::Lea, reg[i - 1], "[rbp-" + std::to_string(adr) + "]");
+        }
+
+        body.emplace_back(Op::Xor, "eax", "eax");
+        body.emplace_back(Op::Call, "scanf");
     }
     else if (node->name == "enter_point")
     {
@@ -926,20 +1118,15 @@ std::pair<std::vector<AsmCommand>, std::vector<AsmCommand>> Generator::gen_comma
 
         res.first.emplace_back(Op::Label, lab);
 
-        if (stack.size() > 1)
-        {
-            int stack_size = stack.size();
-            stack_size >>= 4;
-            stack_size += 1;
-            stack_size <<= 4;
-            
-            res.first.emplace_back(Op::Push, "rbp");
-            res.first.emplace_back(Op::Mov, "rbp", "rsp");
-            res.first.emplace_back(Op::Sub, "rsp", std::to_string(stack_size));
+        int stack_size = static_cast<int>(stack.size()) - 1 + 32;
+        stack_size = (stack_size + 15) / 16 * 16;
 
-            res.second.emplace_back(Op::Add, "rsp", std::to_string(stack_size));
-            res.second.emplace_back(Op::Pop, "rbp");
-        }
+        res.first.emplace_back(Op::Push, "rbp");
+        res.first.emplace_back(Op::Mov, "rbp", "rsp");
+        res.first.emplace_back(Op::Sub, "rsp", std::to_string(stack_size));
+
+        res.second.emplace_back(Op::Add, "rsp", std::to_string(stack_size));
+        res.second.emplace_back(Op::Pop, "rbp");
         res.second.emplace_back(Op::Ret);
     }
     else if (node->name != "stworz" && node->name != "usun")
@@ -1420,8 +1607,141 @@ bool Generator::Piphole_opt()
             registers.clear();
             clear_known_cmp();
         }
+
+        if (cur.op == Op::Mov && cur.a.size() <= 3 && cur.b.size() <= 3)
+        {
+            std::string reg = cur.b;
+
+            std::size_t j = 1;
+
+            while (body[i - j].a == reg)
+                j++;
+            j--;
+
+            if (j && body[i - j].op == Op::Mov)
+            {
+                for (; j > 0; j--)
+                    body[i - j].a = cur.a;
+                body.erase(body.begin() + i);
+                i--;
+            }
+        }
     }
     return changed;
+}
+
+void Generator::compact_stack_offsets()
+{
+    std::vector<int> used_offsets;
+    auto collect_offset = [&](const std::string &operand)
+    {
+        int offset = 0;
+        if (stack_offset_value(operand, offset))
+            used_offsets.push_back(offset);
+    };
+
+    for (const AsmCommand &cmd : body)
+    {
+        collect_offset(cmd.a);
+        collect_offset(cmd.b);
+    }
+
+    if (used_offsets.empty())
+    {
+        int stack_size = align_stack_size(0);
+        for (AsmCommand &cmd : body)
+            if ((cmd.op == Op::Sub || cmd.op == Op::Add) && cmd.a == "rsp")
+                cmd.b = std::to_string(stack_size);
+        return;
+    }
+
+    std::vector<StackSlot> slots;
+    auto add_slot = [&](int old_end, int size)
+    {
+        if (old_end <= 0 || size <= 0)
+            return;
+
+        for (StackSlot &slot : slots)
+        {
+            if (slot.old_end == old_end)
+            {
+                slot.size = std::max(slot.size, size);
+                return;
+            }
+        }
+
+        StackSlot slot;
+        slot.old_end = old_end;
+        slot.size = size;
+        slots.push_back(slot);
+    };
+
+    for (int offset : used_offsets)
+    {
+        Varbile *best = nullptr;
+        for (const auto &entry : mem)
+        {
+            Varbile *var = entry.second;
+            if (var == nullptr || var->size == 0)
+                continue;
+
+            int old_end = static_cast<int>(var->addres);
+            int size = static_cast<int>(var->size);
+            if (old_end - size < offset && offset <= old_end)
+                if (best == nullptr || var->size < best->size)
+                    best = var;
+        }
+
+        if (best != nullptr)
+            add_slot(static_cast<int>(best->addres), static_cast<int>(best->size));
+        else
+            add_slot(offset, 1);
+    }
+
+    std::sort(slots.begin(), slots.end(), [](const StackSlot &lhs, const StackSlot &rhs)
+              { return lhs.old_end < rhs.old_end; });
+
+    int used_size = 0;
+    for (StackSlot &slot : slots)
+    {
+        used_size += slot.size;
+        slot.new_end = used_size;
+    }
+
+    auto remap_offset = [&](int offset)
+    {
+        const StackSlot *best = nullptr;
+        for (const StackSlot &slot : slots)
+            if (slot.old_end - slot.size < offset && offset <= slot.old_end)
+                if (best == nullptr || slot.size < best->size)
+                    best = &slot;
+
+        if (best == nullptr)
+            return offset;
+        return best->new_end - (best->old_end - offset);
+    };
+
+    auto replace_offset = [&](std::string &operand)
+    {
+        std::size_t num_begin = 0, num_len = 0;
+        int offset = 0;
+        if (!stack_offset_span(operand, num_begin, num_len, offset))
+            return;
+
+        int new_offset = remap_offset(offset);
+        operand.replace(num_begin, num_len, std::to_string(new_offset));
+    };
+
+    for (AsmCommand &cmd : body)
+    {
+        replace_offset(cmd.a);
+        replace_offset(cmd.b);
+    }
+
+    int stack_size = align_stack_size(used_size);
+    for (AsmCommand &cmd : body)
+        if ((cmd.op == Op::Sub || cmd.op == Op::Add) && cmd.a == "rsp")
+            cmd.b = std::to_string(stack_size);
 }
 
 Generator::Generator(Tree tree)

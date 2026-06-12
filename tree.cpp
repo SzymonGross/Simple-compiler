@@ -15,10 +15,13 @@ namespace
 {
     std::unordered_map<std::string, long long> constants;
     std::unordered_set<std::string> var_names;
+    std::unordered_map<std::string, std::string> var_types;
     std::unordered_set<std::string> stop_names;
 
     const std::unordered_set<std::string> operands = {"+", "-", "*", "/", "%", "<<", ">>", "&&", "||", "(", ")", "==", "!=", "<=", ">=", "<", ">", "!"};
     const std::unordered_set<std::string> comp_operands = {"==", "!=", "<=", ">=", "<", ">"};
+
+    std::unordered_map<std::string, std::string> ffun_sufix = {{"liczba", "d"}, {"logika", "hhd"}, {"adres", "lld"}};
 
     std::unordered_map<std::string, std::string> operand_type = {
         {"+", "liczba"},
@@ -80,10 +83,72 @@ namespace
          {{0, "cl"},
           {1, "dl"},
           {2, "r8b"},
-          {3, "r9b"}}}};
+          {3, "r9b"}}},
+        {"adres",
+         {{0, "rcx"},
+          {1, "rdx"},
+          {2, "r8"},
+          {3, "r9"}}}};
+
+    const std::unordered_map<std::string, std::string> type_to_return_reg = {
+        {"logika", "al"},
+        {"liczba", "eax"},
+        {"adres", "rax"}};
+
+    const std::unordered_map<std::string, int> type_rank = {
+        {"logika", 1},
+        {"liczba", 2},
+        {"adres", 3}};
+
+    void remember_variable_type(const std::string &name, const std::string &type)
+    {
+        var_types[name] = type;
+    }
+
+    std::string promoted_type(const std::string &left, const std::string &right)
+    {
+        int left_rank = type_rank.count(left) ? type_rank.at(left) : 0;
+        int right_rank = type_rank.count(right) ? type_rank.at(right) : 0;
+
+        if (left_rank >= right_rank)
+            return left;
+        return right;
+    }
+
+    std::string register_type(const std::string &s)
+    {
+        if (s == "al" || s == "cl" || s == "dl" || s == "r8b" || s == "r9b")
+            return "logika";
+        if (s == "eax" || s == "ecx" || s == "edx" || s == "r8d" || s == "r9d")
+            return "liczba";
+        if (s == "rax" || s == "rcx" || s == "rdx" || s == "r8" || s == "r9")
+            return "adres";
+        return {};
+    }
+
+    bool wrapped_in_outer_parentheses(const std::string &s)
+    {
+        if (s.size() < 2 || s.front() != '(' || s.back() != ')')
+            return false;
+
+        int depth = 0;
+        for (std::size_t i = 0; i < s.size(); i++)
+        {
+            if (s[i] == '(')
+                depth++;
+            else if (s[i] == ')')
+                depth--;
+
+            if (depth == 0 && i + 1 < s.size())
+                return false;
+        }
+
+        return depth == 0;
+    }
 
     std::string get_var_name(const std::string s)
     {
+        
         int id = 0;
         while (var_names.count(s + '_' + std::to_string(id)))
             id++;
@@ -168,6 +233,77 @@ namespace
         return s;
     }
 
+    bool find_top_level_operator(const std::string &s, std::size_t &idn, std::string &op)
+    {
+        int lay = 0, best_priority = 100;
+        idn = std::string::npos;
+        op.clear();
+
+        for (std::size_t i = 0; i < s.size(); i++)
+        {
+            if (s[i] == '(')
+                lay++;
+            else if (s[i] == ')')
+                lay--;
+
+            if (lay != 0)
+                continue;
+
+            std::string cur_op;
+            if (i + 1 < s.size() && operands.count(s.substr(i, 2)))
+                cur_op = s.substr(i, 2);
+            else if (operands.count(s.substr(i, 1)))
+                cur_op = s.substr(i, 1);
+
+            if (!cur_op.empty() && operand_priority.count(cur_op) && operand_priority[cur_op] < best_priority)
+            {
+                best_priority = operand_priority[cur_op];
+                idn = i;
+                op = cur_op;
+            }
+        }
+
+        return idn != std::string::npos;
+    }
+
+    std::string expression_value_type(const std::string &expr, const std::string &fallback)
+    {
+        std::string s = remove_spaces(expr);
+        while (wrapped_in_outer_parentheses(s))
+            s = s.substr(1, s.size() - 2);
+
+        if (s.empty() || is_num(s))
+            return fallback;
+
+        if (var_types.count(s))
+            return var_types[s];
+
+        std::string reg_type = register_type(s);
+        if (!reg_type.empty())
+            return reg_type;
+
+        std::size_t idn = 0;
+        std::string sign;
+        if (!find_top_level_operator(s, idn, sign))
+            return fallback;
+
+        if (sign == "!" || sign == "&&" || sign == "||" ||
+            sign == "==" || sign == "!=" || sign == "<=" || sign == ">=" || sign == "<" || sign == ">")
+            return "logika";
+
+        std::string beg = s.substr(0, idn);
+        std::string end = s.substr(idn + sign.size());
+        return promoted_type(expression_value_type(beg, fallback), expression_value_type(end, fallback));
+    }
+
+    std::string operation_operand_type(const std::string &sign, const std::string &beg, const std::string &end, const std::string &fallback)
+    {
+        if (sign == "!" || sign == "&&" || sign == "||")
+            return "logika";
+
+        return promoted_type(expression_value_type(beg, fallback), expression_value_type(end, fallback));
+    }
+
     bool is_known_value(const std::string &s, const std::unordered_map<std::string, long long> &know, long long &value)
     {
         if (is_num(s))
@@ -223,7 +359,7 @@ namespace
             add_expr_variables(arg[1], vars);
         else if ((name == "idzjezeli" || name == "zakoncz") && !arg.empty())
             add_expr_variables(arg[0], vars);
-        else if (name == "wczytaj" && arg.size() >= 3)
+        else if (name == "wczytaj_ram" && arg.size() >= 3)
         {
             add_expr_variables(arg[1], vars);
             add_expr_variables(arg[2], vars);
@@ -233,6 +369,28 @@ namespace
             add_expr_variables(arg[0], vars);
             add_expr_variables(arg[1], vars);
             add_expr_variables(arg[2], vars);
+        }
+        else if (name == "wypisz")
+        {
+            for (std::size_t i = 1; i < arg.size(); i++)
+                add_expr_variables(arg[i], vars);
+        }
+
+        return vars;
+    }
+
+    std::vector<std::string> edited_variables(const std::string &name, const std::vector<std::string> &arg)
+    {
+        std::vector<std::string> vars;
+
+        if (name == "ustaw" && !arg.empty())
+            add_expr_variables(arg[0], vars);
+        else if (name == "wczytaj_ram" && !arg.empty())
+            add_expr_variables(arg[0], vars);
+        else if (name == "wczytaj")
+        {
+            for (std::size_t i = 1; i < arg.size(); i++)
+                add_expr_variables(arg[i], vars);
         }
 
         return vars;
@@ -730,7 +888,13 @@ void Tree::append(const Token &tok)
     }
 
     if (tok.name == "stworz")
+    {
         var_names.insert(tok.arg.back());
+        if (tok.arg[0] == "tablica" && tok.arg.size() >= 4)
+            remember_variable_type(tok.arg.back(), "tablica_" + tok.arg[1]);
+        else
+            remember_variable_type(tok.arg.back(), tok.arg[0]);
+    }
 
     Node *line = new Node(tok.name, cur);
     cur->child.push_back(line);
@@ -758,6 +922,7 @@ int Tree::node_traversal(Node *cur)
             Node *cre = new Node("stworz", cur);
             cre->arg.push_back(type);
             cre->arg.push_back(name);
+            remember_variable_type(name, type);
 
             Node *set = new Node("ustaw", cur);
             set->arg.push_back(name);
@@ -783,7 +948,7 @@ int Tree::node_traversal(Node *cur)
         while (par->child[idx] != cur)
             idx++;
 
-        std::string name = get_stop_name("loop");
+        std::string name = get_stop_name(beg->arg[1] + "_loop");
         auto &v = par->child;
 
         Node *go_to = new Node("idz", cur);
@@ -865,7 +1030,7 @@ int Tree::node_traversal(Node *cur)
         {
             if (!(idx + block_size < v.size() && v[idx + block_size]->name == "punkt" && !cur->child.empty() && cur->child.back()->name == "idz" && cur->child.back()->arg[0] == v[idx + block_size]->arg[0]))
             {
-                std::string punkt_label = get_stop_name("blockend");
+                std::string punkt_label = get_stop_name(beg->arg[1]+ "_blockend");
                 Node *punkt = new Node("punkt", par);
                 punkt->arg.push_back(punkt_label);
                 v.insert(v.begin() + idx + block_size, punkt);
@@ -886,6 +1051,7 @@ int Tree::node_traversal(Node *cur)
 
         creator->arg.push_back("logika");
         creator->arg.push_back(name);
+        remember_variable_type(name, "logika");
 
         set->arg.push_back(name);
         set->arg.push_back(cur->arg[0]);
@@ -911,7 +1077,7 @@ int Tree::node_traversal(Node *cur)
         neg->arg.push_back(cur->arg[0]);
         neg->arg.push_back("!" + cur->arg[0]);
 
-        std::string stop = get_stop_name("endif");
+        std::string stop = get_stop_name(beg->arg[1] + "_endif");
         Node *end = new Node("punkt", cur);
         cur->child.push_back(end);
         end->arg.push_back(stop);
@@ -920,6 +1086,67 @@ int Tree::node_traversal(Node *cur)
         cur->name = "idzjezeli";
 
         return 0;
+    }
+
+    if (cur->name == "wczytaj" && cur->arg.size() == 1)
+    {
+        std::vector<std::string> vars;
+        add_expr_variables(cur->arg[0], vars);
+        if (vars.empty())
+            throw std::runtime_error("Brak zmiennych w wczytaj");
+
+        cur->arg[0] = "\"";
+        for (const std::string &name : vars)
+            cur->arg[0] += "%" + ffun_sufix[var_types[name]];
+        cur->arg[0] += "\"";
+
+        for (const auto &s : vars)
+            cur->arg.push_back(s);
+    }
+
+    if (cur->name == "wypisz" && cur->arg.size() == 1)
+    {
+        std::vector<std::string> vars;
+        std::string buf = "", &arg = cur->arg[0];
+        bool read = false;
+        std::size_t start = 0;
+
+        for (std::size_t i = 0; i < arg.size(); i++)
+        {
+            char c = arg[i];
+
+            if (c == '%')
+            {
+                read = true;
+                buf = "";
+                start = i + 1;
+                continue;
+            }
+
+            if (read)
+                buf += c;
+
+            if (read && var_names.count(buf))
+            {
+                vars.push_back(buf);
+
+                std::string suf = ffun_sufix[var_types[buf]];
+                arg.replace(start, buf.size(), suf);
+                i = start + suf.size() - 1;
+
+                buf = "";
+                read = false;
+            }
+
+            if (c == ' ')
+            {
+                buf = "";
+                read = false;
+            }
+        }
+
+        for (const auto s : vars)
+            cur->arg.push_back(s);
     }
 
     if (cur->name == "zakoncz" && (!var_names.count(cur->arg[0]) && !is_num(cur->arg[0])))
@@ -939,6 +1166,7 @@ int Tree::node_traversal(Node *cur)
 
         cre->arg.push_back(god->arg[0]);
         cre->arg.push_back(temp_name);
+        remember_variable_type(temp_name, god->arg[0]);
 
         Node *set = new Node("ustaw", par);
         set->arg.push_back(temp_name);
@@ -1006,6 +1234,7 @@ int Tree::node_traversal(Node *cur)
                         throw std::runtime_error("Nieobslugiwany argument wywolania funkcji: " + fun_name);
 
                     std::string temp_name = get_var_name(type);
+                    remember_variable_type(temp_name, type);
                     temp_names.push_back(temp_name);
 
                     Node *create = new Node("stworz", par);
@@ -1034,7 +1263,7 @@ int Tree::node_traversal(Node *cur)
 
             v.insert(v.begin() + idx, prefix.begin(), prefix.end());
 
-            cur->arg[1] = (fun_type[fun_name] == "liczba") ? "eax" : "al";
+            cur->arg[1] = type_to_return_reg.at(fun_type[fun_name]);
             return 0;
         }
 
@@ -1098,8 +1327,11 @@ int Tree::node_traversal(Node *cur)
                 }
                 else
                 {
-                    std::string type = operand_type[sign];
+                    std::string fallback = expression_value_type(cur->arg[0], "liczba");
+                    std::string type = operation_operand_type(sign, beg, end, fallback);
                     std::string temp_name_1 = get_var_name(type), temp_name_2 = get_var_name(type);
+                    remember_variable_type(temp_name_1, type);
+                    remember_variable_type(temp_name_2, type);
 
                     Node *set_1 = new Node("ustaw", par);
                     set_1->arg.push_back(temp_name_1);
@@ -1211,7 +1443,7 @@ bool Tree::constant_folding_node(Node *cur, std::unordered_map<std::string, long
         }
     }
 
-    if (cur->name == "wczytaj" && cur->arg.size() >= 3)
+    if (cur->name == "wczytaj_ram" && cur->arg.size() >= 3)
     {
         changed |= fold_known_arg(cur->arg[2]);
 
@@ -1226,6 +1458,16 @@ bool Tree::constant_folding_node(Node *cur, std::unordered_map<std::string, long
         }
         else
             know.erase(cur->arg[0]);
+    }
+    else if (cur->name == "wczytaj")
+    {
+        for (const std::string &name : edited_variables(cur->name, cur->arg))
+            know.erase(name);
+    }
+    else if (cur->name == "wypisz")
+    {
+        for (std::size_t i = 1; i < cur->arg.size(); i++)
+            changed |= fold_known_arg(cur->arg[i]);
     }
     else if (cur->name == "zapisz" && cur->arg.size() >= 3)
     {
@@ -1371,8 +1613,11 @@ bool Tree::loop_unrolling_node(Node *cur, std::unordered_map<std::string, long l
                 know.erase(child->arg[0]);
         }
 
-        if (child->name == "wczytaj" && !child->arg.empty())
+        if (child->name == "wczytaj_ram" && !child->arg.empty())
             know.erase(child->arg[0]);
+        else if (child->name == "wczytaj")
+            for (const std::string &name : edited_variables(child->name, child->arg))
+                know.erase(name);
 
         if (child->name == "punkt" || child->name == "idz" || child->name == "idzjezeli" || child->name == "wywolaj")
             know.clear();
@@ -1540,6 +1785,13 @@ bool Tree::array_access_lowering_node(Node *cur, const std::unordered_map<std::s
     {
         Node *node = new Node(name, parent);
         node->arg = arg;
+        if (name == "stworz" && arg.size() >= 2)
+        {
+            if (arg[0] == "tablica" && arg.size() >= 4)
+                remember_variable_type(arg.back(), "tablica_" + arg[1]);
+            else
+                remember_variable_type(arg.back(), arg[0]);
+        }
         return node;
     };
 
@@ -1562,7 +1814,7 @@ bool Tree::array_access_lowering_node(Node *cur, const std::unordered_map<std::s
             std::string value_name = get_var_name(array_types.at(ref.name));
 
             prefix.push_back(make_node("stworz", parent, {array_types.at(ref.name), value_name}));
-            prefix.push_back(make_node("wczytaj", parent, {value_name, ref.name, index_name}));
+            prefix.push_back(make_node("wczytaj_ram", parent, {value_name, ref.name, index_name}));
 
             expr.replace(ref.begin, ref.end - ref.begin, value_name);
         }
@@ -1657,6 +1909,8 @@ void Tree::collect_variable_lifetimes_node(Node *cur, std::unordered_map<std::st
     }
 
     for (const auto &name : used_variables(cur->name, cur->arg))
+        last_use[name] = cur;
+    for (const auto &name : edited_variables(cur->name, cur->arg))
         last_use[name] = cur;
 
     for (Node *child : cur->child)
@@ -1804,7 +2058,7 @@ void Tree::release_dead_variables()
     release_dead_variables_node();
 }
 
-void Tree::varible_counter_node(Node *cur, std::unordered_map<std::string, int> &total_usage)
+void Tree::varible_counter_node(Node *cur, std::unordered_map<std::string, int> &total_usage, std::unordered_map<std::string, int> &total_edits)
 {
     if (cur->name == "ustaw")
     {
@@ -1820,19 +2074,20 @@ void Tree::varible_counter_node(Node *cur, std::unordered_map<std::string, int> 
                 total_usage[name]++;
     }
 
-    if (cur->name == "idzjezeli" || cur->name == "zakoncz" || cur->name == "wczytaj" || cur->name == "zapisz")
+    if (cur->name == "idzjezeli" || cur->name == "zakoncz" || cur->name == "wczytaj_ram" || cur->name == "zapisz" || cur->name == "wypisz")
         add_variable_counts(used_variables(cur->name, cur->arg), total_usage);
+    add_variable_counts(edited_variables(cur->name, cur->arg), total_edits);
 
     for (std::size_t i = 0; i < cur->child.size(); i++)
-        varible_counter_node(cur->child[i], total_usage);
+        varible_counter_node(cur->child[i], total_usage, total_edits);
 }
 
-bool Tree::varible_cleaner_node(Node *cur, std::unordered_map<std::string, int> &total_usage)
+bool Tree::varible_cleaner_node(Node *cur, std::unordered_map<std::string, int> &total_usage, std::unordered_map<std::string, int> &total_edits)
 {
     bool changed = false;
 
     for (std::size_t i = 0; i < cur->child.size(); i++)
-        changed |= varible_cleaner_node(cur->child[i], total_usage);
+        changed |= varible_cleaner_node(cur->child[i], total_usage, total_edits);
 
     bool remove_assignment = false;
     if (cur->name == "ustaw")
@@ -1845,7 +2100,7 @@ bool Tree::varible_cleaner_node(Node *cur, std::unordered_map<std::string, int> 
             remove_assignment = !target_base.empty() && total_usage[target_base] == 0;
         }
     }
-    else if (cur->name == "wczytaj" && !cur->arg.empty())
+    else if (cur->name == "wczytaj_ram" && !cur->arg.empty())
     {
         remove_assignment = total_usage[cur->arg[0]] == 0;
     }
@@ -1862,7 +2117,7 @@ bool Tree::varible_cleaner_node(Node *cur, std::unordered_map<std::string, int> 
         delete cur;
         changed = 1;
     }
-    if (cur->name == "stworz" && total_usage[cur->arg.back()] == 0)
+    if (cur->name == "stworz" && total_usage[cur->arg.back()] == 0 && total_edits[cur->arg.back()] == 0)
     {
         Node *par = cur->parent;
         std::size_t idx = 0;
@@ -1881,8 +2136,9 @@ bool Tree::varible_cleaner_node(Node *cur, std::unordered_map<std::string, int> 
 bool Tree::varible_cleaner()
 {
     std::unordered_map<std::string, int> total_usage;
-    varible_counter_node(beg, total_usage);
-    return varible_cleaner_node(beg, total_usage);
+    std::unordered_map<std::string, int> total_edits;
+    varible_counter_node(beg, total_usage, total_edits);
+    return varible_cleaner_node(beg, total_usage, total_edits);
 }
 
 bool Tree::neg_simplification_node(Node *cur, std::unordered_map<std::string, Node *> &last_use)

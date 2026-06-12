@@ -43,7 +43,8 @@ enum class Op
     Je,
     Jl,
     Jg,
-    Jge
+    Jge,
+    Asciz
 };
 
 struct AsmCommand
@@ -65,6 +66,10 @@ class Generator
     std::unordered_map<std::string, Varbile *> mem;
 
 public:
+    bool contains_printf = false;
+    bool contains_scanf = false;
+
+    std::vector<AsmCommand> data;
     std::vector<AsmCommand> body;
 
 private:
@@ -75,5 +80,6 @@ private:
 
 public:
     bool Piphole_opt();
+    void compact_stack_offsets();
     Generator(Tree tree);
 };
