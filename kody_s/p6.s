@@ -5,13 +5,13 @@
 
 .section .data
 main_text_1:
-    .asciz "FUCK YOU WORD!\n"
+    .asciz "HELLO WORLD!\n"
 text_main2:
     .asciz "%lld%d"
 main_text_2:
-    .asciz "zatem x to %lld\n"
+    .asciz "So x is %lld\n"
 text_main3:
-    .asciz "zatem x+y to %lld\n"
+    .asciz "So x+y is %lld\n"
 
 .section .text
 main:

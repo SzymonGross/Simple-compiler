@@ -1,17 +1,17 @@
 poczontek
 {
-    wypisz "FUCK YOU WORD!\n"
+    wypisz "HELLO WORLD!\n"
 
     adres x <- 0
     liczba y
 
     wczytaj x, y
 
-    wypisz "zatem x to %x\n"
+    wypisz "So x is %x\n"
 
     x <- x + y
 
-    wypisz "zatem x+y to %x\n"
+    wypisz "So x+y is %x\n"
 
     x<-0
 
