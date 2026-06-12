@@ -1,4 +1,4 @@
-# Compiler 2.0
+# Simple compiler
 
 A simple compiler written in C++17. It translates a small Polish-inspired
 source language from `.pl` files into x86-64 assembly using Intel syntax
