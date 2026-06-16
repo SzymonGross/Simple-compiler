@@ -65,6 +65,7 @@ poczontek {
 ### Types
 
 ```text
+adres       # 64-bit intiger
 liczba      # 32-bit integer
 logika      # boolean value, stored as one byte
 ```
@@ -81,8 +82,6 @@ a <-+ 1      # shorthand for: a <- a + 1
 a <-/ 10     # shorthand for: a <- a / 10
 ```
 
-Internally, these instructions are lowered into `stworz` and `ustaw` tokens.
-
 ### Arrays
 
 ```text
@@ -90,8 +89,6 @@ liczba[15] tab
 tab[0] <- 1
 tab[i+2] <- tab[i] + tab[i+1]
 ```
-
-Array accesses are lowered into internal `wczytaj` and `zapisz` operations.
 
 ### Conditionals
 
@@ -127,9 +124,6 @@ A function has the following form:
 }
 ```
 
-Up to 4 arguments are supported. Function arguments are passed through `ecx`,
-`edx`, `r8d`, `r9d` for `liczba`, and `cl`, `dl`, `r8b`, `r9b` for `logika`.
-
 Recursive example:
 
 ```text
@@ -151,17 +145,29 @@ poczontek {
 }
 ```
 
-Function calls are lowered in `tree.cpp` into:
+### Input/Output
 
 ```text
-ustaw <argument_register> <expression>
-wywolaj <function_name>
-ustaw <target> eax/al
+wypisz "Hello World!"
 ```
 
-For nested function calls, the compiler first materializes arguments into
-temporary variables so that a `call` cannot overwrite already prepared argument
-registers.
+Writes: 'Hello World!'.
+
+```text
+liczba x <- 3
+wypisz "x = %x"
+```
+
+Writes: 'x = 3'.
+
+```text
+    liczba x
+    wczytaj x
+```
+
+Allows you to write x.
+
+Both functions are loverd into printf and scanf from standard c libary.
 
 ### Expressions
 
